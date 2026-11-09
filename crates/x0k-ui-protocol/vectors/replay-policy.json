@@ -1,0 +1,1357 @@
+{
+  "clause": "ui-interfaces §5",
+  "check": "offer.replay_policy",
+  "about": "What a driver's end makes of an offer's replay policy. A policy that lowers a floor of graded-introspection §9 is refused as unreadable, naming the entry: vary performing a non_idempotent effect (the fourth floor), or compensated in either column (the fifth, compensation is offered and never automatic). So is a sandboxed disposition that names no declared sandbox serving what the entry covers, and an entry for an action the offer does not list. The answer is {reads: true} or {refused}.",
+  "vectors": [
+    {
+      "name": "an offer that states no policy takes the defaults, and reads",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "reads": true
+      }
+    },
+    {
+      "name": "simulating a non_idempotent effect under vary reads",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "non_idempotent"
+              },
+              "vary": "simulated"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "reads": true
+      }
+    },
+    {
+      "name": "refusing an effect reads",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "read_only"
+              },
+              "vary": "refused"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "reads": true
+      }
+    },
+    {
+      "name": "performing a non_idempotent class under vary lowers the fourth floor",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "non_idempotent"
+              },
+              "vary": "performed"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "class non_idempotent"
+        }
+      }
+    },
+    {
+      "name": "performing a non_idempotent action under vary lowers it the same way",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "action",
+                "action": "send"
+              },
+              "vary": "performed"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "action send"
+        }
+      }
+    },
+    {
+      "name": "performing a non_idempotent effect after the cut of a continue reads",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "non_idempotent"
+              },
+              "continue_after_cut": "performed"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "reads": true
+      }
+    },
+    {
+      "name": "compensated under vary lowers the fifth floor",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "idempotent_write"
+              },
+              "vary": "compensated"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "class idempotent_write"
+        }
+      }
+    },
+    {
+      "name": "compensated after the cut lowers it too",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "action",
+                "action": "save"
+              },
+              "continue_after_cut": "compensated"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "action save"
+        }
+      }
+    },
+    {
+      "name": "sandboxed naming a declared sandbox that serves the class reads",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "idempotent_write"
+              },
+              "vary": "sandboxed",
+              "sandbox": "scratch"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "reads": true
+      }
+    },
+    {
+      "name": "sandboxed for an action whose class the sandbox serves reads",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "action",
+                "action": "save"
+              },
+              "vary": "sandboxed",
+              "sandbox": "scratch"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "reads": true
+      }
+    },
+    {
+      "name": "sandboxed naming no sandbox is refused",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "idempotent_write"
+              },
+              "vary": "sandboxed"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "class idempotent_write"
+        }
+      }
+    },
+    {
+      "name": "sandboxed naming a sandbox the offer does not declare is refused",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "idempotent_write"
+              },
+              "vary": "sandboxed",
+              "sandbox": "elsewhere"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "class idempotent_write"
+        }
+      }
+    },
+    {
+      "name": "sandboxed naming a sandbox that serves another class is refused",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "non_idempotent"
+              },
+              "vary": "sandboxed",
+              "sandbox": "scratch"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "class non_idempotent"
+        }
+      }
+    },
+    {
+      "name": "an entry naming an action the offer does not list is refused",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "action",
+                "action": "nothing"
+              },
+              "vary": "simulated"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unreadable_policy",
+          "subject": "action nothing"
+        }
+      }
+    }
+  ]
+}

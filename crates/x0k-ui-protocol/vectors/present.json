@@ -1,0 +1,691 @@
+{
+  "clause": "ui-interfaces §4",
+  "check": "fixture.present",
+  "about": "What an app does with a present before it shows anything. It checks the call's fingerprint against its state shape, the head the call names against its live state, and the state, after any merge patch, against the shape. Each is refused by name. The input is the offer, the app's live state, the spelling of its state shape and the call; the answer is {presents: <the state to show>} or {refused}. The live state's fingerprint is the shape's pin.",
+  "vectors": [
+    {
+      "name": "a whole state that fits the shape is shown as given",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "state",
+            "state": {
+              "count": 5
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "presents": {
+          "count": 5,
+          "title": null
+        }
+      }
+    },
+    {
+      "name": "a patch over the live state changes only the fields it names",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "patch",
+            "patch": {
+              "count": 7
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "presents": {
+          "count": 7,
+          "title": "draft"
+        }
+      }
+    },
+    {
+      "name": "a null in a patch removes its field",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "patch",
+            "patch": {
+              "title": null
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "presents": {
+          "count": 2,
+          "title": null
+        }
+      }
+    },
+    {
+      "name": "a call naming the live head is shown",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "patch",
+            "patch": {}
+          },
+          "fingerprint": "53a0ce8ce5e01c10",
+          "if_match": "s3"
+        }
+      },
+      "expect": {
+        "presents": {
+          "count": 2,
+          "title": "draft"
+        }
+      }
+    },
+    {
+      "name": "a call naming a head the live state has moved past is refused, naming the current head",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "patch",
+            "patch": {}
+          },
+          "fingerprint": "53a0ce8ce5e01c10",
+          "if_match": "s2"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "stale_head",
+          "subject": "s3"
+        }
+      }
+    },
+    {
+      "name": "a fingerprint that is not the app's state shape's is refused, naming it",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "patch",
+            "patch": {}
+          },
+          "fingerprint": "0000000000000000"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "wrong_fingerprint",
+          "subject": "0000000000000000"
+        }
+      }
+    },
+    {
+      "name": "a patch whose result does not fit the shape is refused, naming the place",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "patch",
+            "patch": {
+              "count": "many"
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_state",
+          "subject": "$.count"
+        }
+      }
+    },
+    {
+      "name": "a field a closed shape does not name does not fit",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "state",
+            "state": {
+              "count": 1,
+              "extra": true
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_state"
+        }
+      }
+    },
+    {
+      "name": "an app whose offer takes no fixtures refuses present",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": false
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "state",
+            "state": {
+              "count": 1
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "no_fixtures"
+        }
+      }
+    },
+    {
+      "name": "an app that declares no state shape takes no fixtures",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          }
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": null,
+        "present": {
+          "fixture": {
+            "kind": "state",
+            "state": {
+              "count": 1
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "no_fixtures"
+        }
+      }
+    },
+    {
+      "name": "an app that offers no ui/history refuses present",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3"
+        },
+        "live": {
+          "value": {
+            "count": 2,
+            "title": "draft"
+          },
+          "head": "s3",
+          "fingerprint": "53a0ce8ce5e01c10"
+        },
+        "shape": {
+          "kind": "struct",
+          "open": false,
+          "fields": {
+            "count": {
+              "shape": {
+                "kind": "int"
+              }
+            },
+            "title": {
+              "shape": {
+                "kind": "text"
+              },
+              "presence": "optional"
+            }
+          }
+        },
+        "present": {
+          "fixture": {
+            "kind": "state",
+            "state": {
+              "count": 1
+            }
+          },
+          "fingerprint": "53a0ce8ce5e01c10"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "no_history_interface",
+          "subject": "ui/history"
+        }
+      }
+    }
+  ]
+}

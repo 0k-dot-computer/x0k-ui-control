@@ -1,0 +1,114 @@
+{
+  "clause": "ui-control-channel §8",
+  "check": "observation.fit",
+  "about": "An observation answers every part asked for or refuses it by name, invents none, names the frame a capture came from, keeps layout in the capture's pixels, and names what its frame shows (ui-interfaces §3). The answer is {fits: true} or {fits: false, fault}.",
+  "vectors": [
+    {
+      "name": "a capture and a layout that line up",
+      "input": {
+        "call": {"parts": ["capture", "layout"]},
+        "observation": {
+          "frame": "f1",
+          "shown": {"kind": "live"},
+          "capture": {"width": 800, "height": 600, "scale_factor": 2.0},
+          "layout": {"id": "root", "role": "window", "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "visible": true, "enabled": true, "focused": false, "interactive": false,
+            "children": [{"id": "send", "role": "button", "label": "Send", "action": "chat.send",
+              "bounds": {"x": 700, "y": 550, "width": 80, "height": 40},
+              "visible": true, "enabled": true, "focused": true, "interactive": true}]}
+        }
+      },
+      "expect": {"fits": true}
+    },
+    {
+      "name": "an app that presents no frame answers layout and state and refuses the capture",
+      "input": {
+        "call": {"parts": ["capture", "layout", "state"]},
+        "observation": {
+          "shown": {"kind": "position", "position": 7},
+          "layout": {"id": "root", "role": "window", "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "visible": false, "enabled": true, "focused": false, "interactive": false},
+          "state": {"value": {"open": true}, "head": "h1", "fingerprint": "fp1"},
+          "refused": [{"part": "capture", "why": "this app presents no frame"}]
+        }
+      },
+      "expect": {"fits": true}
+    },
+    {
+      "name": "a part neither answered nor refused",
+      "input": {
+        "call": {"parts": ["capture", "state"]},
+        "observation": {"frame": "f1", "capture": {"width": 10, "height": 10, "scale_factor": 1.0}}
+      },
+      "expect": {"fits": false, "fault": {"part_missing": {"part": "state"}}}
+    },
+    {
+      "name": "a part nobody asked for",
+      "input": {
+        "call": {"parts": ["state"]},
+        "observation": {"frame": "f1", "capture": {"width": 10, "height": 10, "scale_factor": 1.0},
+          "state": {"value": null, "head": "h1", "fingerprint": "fp1"}}
+      },
+      "expect": {"fits": false, "fault": {"part_unasked": {"part": "capture"}}}
+    },
+    {
+      "name": "a part both answered and refused",
+      "input": {
+        "call": {"parts": ["state"]},
+        "observation": {"state": {"value": null, "head": "h1", "fingerprint": "fp1"},
+          "refused": [{"part": "state", "why": "no state"}]}
+      },
+      "expect": {"fits": false, "fault": {"part_both": {"part": "state"}}}
+    },
+    {
+      "name": "a capture has to name its frame",
+      "input": {
+        "call": {"parts": ["capture"]},
+        "observation": {"capture": {"width": 10, "height": 10, "scale_factor": 1.0}}
+      },
+      "expect": {"fits": false, "fault": "capture_without_frame"}
+    },
+    {
+      "name": "a node's id is stable within its frame, so two nodes cannot share one",
+      "input": {
+        "call": {"parts": ["layout"]},
+        "observation": {"frame": "f1",
+          "layout": {"id": "a", "role": "window", "bounds": {"x": 0, "y": 0, "width": 9, "height": 9},
+            "visible": true, "enabled": true, "focused": false, "interactive": false,
+            "children": [{"id": "a", "role": "button", "bounds": {"x": 0, "y": 0, "width": 1, "height": 1},
+              "visible": true, "enabled": true, "focused": false, "interactive": true}]}}
+      },
+      "expect": {"fits": false, "fault": {"duplicate_node": {"id": "a"}}}
+    },
+    {
+      "name": "a visible node outside the capture is in the wrong coordinates",
+      "input": {
+        "call": {"parts": ["capture", "layout"]},
+        "observation": {"frame": "f1",
+          "capture": {"width": 400, "height": 300, "scale_factor": 2.0},
+          "layout": {"id": "root", "role": "window", "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "visible": true, "enabled": true, "focused": false, "interactive": false}}
+      },
+      "expect": {"fits": false, "fault": {"node_outside_capture": {"id": "root"}}}
+    },
+    {
+      "name": "a node scrolled out of view may lie outside the capture",
+      "input": {
+        "call": {"parts": ["capture", "layout"]},
+        "observation": {"frame": "f1", "shown": {"kind": "fixture", "handle": "x1"},
+          "capture": {"width": 100, "height": 100, "scale_factor": 1.0},
+          "layout": {"id": "row", "role": "row", "bounds": {"x": 0, "y": 900, "width": 100, "height": 20},
+            "visible": false, "enabled": true, "focused": false, "interactive": true}}
+      },
+      "expect": {"fits": true}
+    },
+    {
+      "name": "an observation names what its frame shows, and is broken without it",
+      "input": {
+        "call": {"parts": ["capture"]},
+        "observation": {"frame": "f1", "capture": {"width": 10, "height": 10, "scale_factor": 1.0}}
+      },
+      "expect": {"fits": false, "fault": "shown_missing"}
+    }
+  ]
+}

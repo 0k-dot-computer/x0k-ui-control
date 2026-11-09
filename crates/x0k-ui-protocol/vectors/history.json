@@ -1,0 +1,93 @@
+{
+  "clause": "ui-interfaces §2",
+  "check": "history.fit",
+  "about": "A history answer holds no more positions than its call's limit, newest first, each inside the call's range and what the app holds, with a state only where the call asked for one and the app holds it. The answer is {fits: true} or {fits: false, fault}.",
+  "vectors": [
+    {
+      "name": "the newest positions first, within the limit, with their states",
+      "input": {
+        "call": {"limit": 2, "include_state": true},
+        "history": {"oldest": 3, "newest": 9, "shown": {"kind": "live"}, "positions": [
+          {"position": 9, "at_us": 900, "changes": ["opened the sidebar"], "trace_ids": ["t9"], "span_ids": ["s9"],
+            "grade": "captured", "state": {"sidebar": true}},
+          {"position": 8, "at_us": 800, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured",
+            "state": {"sidebar": false}}]}
+      },
+      "expect": {"fits": true}
+    },
+    {
+      "name": "a position held only by its trace ids has no state to give",
+      "input": {
+        "call": {"limit": 5, "include_state": true},
+        "history": {"oldest": 3, "newest": 4, "shown": {"kind": "position", "position": 4}, "positions": [
+          {"position": 4, "at_us": 400, "changes": [], "trace_ids": ["t4"], "span_ids": ["s4"], "grade": "emitted"}]}
+      },
+      "expect": {"fits": true}
+    },
+    {
+      "name": "an app with no positions answers none",
+      "input": {
+        "call": {"limit": 5},
+        "history": {"shown": {"kind": "live"}, "positions": []}
+      },
+      "expect": {"fits": true}
+    },
+    {
+      "name": "more positions than the limit",
+      "input": {
+        "call": {"limit": 1},
+        "history": {"oldest": 1, "newest": 2, "shown": {"kind": "live"}, "positions": [
+          {"position": 2, "at_us": 2, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"},
+          {"position": 1, "at_us": 1, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"}]}
+      },
+      "expect": {"fits": false, "fault": {"over_limit": {"count": 2, "limit": 1}}}
+    },
+    {
+      "name": "oldest first",
+      "input": {
+        "call": {"limit": 5},
+        "history": {"oldest": 1, "newest": 2, "shown": {"kind": "live"}, "positions": [
+          {"position": 1, "at_us": 1, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"},
+          {"position": 2, "at_us": 2, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"}]}
+      },
+      "expect": {"fits": false, "fault": {"not_newest_first": {"position": 2}}}
+    },
+    {
+      "name": "a position outside the call's range",
+      "input": {
+        "call": {"from": 5, "to": 6, "limit": 5},
+        "history": {"oldest": 1, "newest": 9, "shown": {"kind": "live"}, "positions": [
+          {"position": 7, "at_us": 7, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"}]}
+      },
+      "expect": {"fits": false, "fault": {"outside_range": {"position": 7}}}
+    },
+    {
+      "name": "a position older than the oldest the app says it holds",
+      "input": {
+        "call": {"limit": 5},
+        "history": {"oldest": 4, "newest": 9, "shown": {"kind": "live"}, "positions": [
+          {"position": 2, "at_us": 2, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"}]}
+      },
+      "expect": {"fits": false, "fault": {"outside_range": {"position": 2}}}
+    },
+    {
+      "name": "a state the call did not ask for",
+      "input": {
+        "call": {"limit": 5},
+        "history": {"oldest": 1, "newest": 1, "shown": {"kind": "live"}, "positions": [
+          {"position": 1, "at_us": 1, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured",
+            "state": {}}]}
+      },
+      "expect": {"fits": false, "fault": {"state_unasked": {"position": 1}}}
+    },
+    {
+      "name": "a captured position without the state the call asked for",
+      "input": {
+        "call": {"limit": 5, "include_state": true},
+        "history": {"oldest": 1, "newest": 1, "shown": {"kind": "live"}, "positions": [
+          {"position": 1, "at_us": 1, "changes": [], "trace_ids": [], "span_ids": [], "grade": "captured"}]}
+      },
+      "expect": {"fits": false, "fault": {"state_missing": {"position": 1}}}
+    }
+  ]
+}

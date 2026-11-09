@@ -1,0 +1,7 @@
+{
+  "productName": "x0k-ui-tauri-probe",
+  "identifier": "computer.x0k.ui-tauri-probe",
+  "build": { "frontendDist": "pages" },
+  "app": { "windows": [], "withGlobalTauri": false, "security": { "csp": null } },
+  "bundle": { "active": false }
+}

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The probe window may answer the plugin's requests.",
+  "windows": ["probe"],
+  "permissions": ["x0k-ui-tauri:default"]
+}

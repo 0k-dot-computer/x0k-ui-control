@@ -1,0 +1,69 @@
+{
+  "clause": "ui-interfaces §2",
+  "check": "history.navigate",
+  "about": "What an app does with a navigate before it shows anything, from what its offer says it holds. A position it never had is refused by name, one it has dropped is unavailable naming the oldest it holds, and only a call to live or to a held position reaches the app. The answer is {reaches_app: true} or {answer}.",
+  "vectors": [
+    {
+      "name": "a held past position reaches the app",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+          "history": {"oldest": 3, "newest": 9}},
+        "navigate": {"to": {"kind": "position", "position": 5}}
+      },
+      "expect": {"reaches_app": true}
+    },
+    {
+      "name": "live always reaches the app",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+          "history": {}},
+        "navigate": {"to": {"kind": "live"}}
+      },
+      "expect": {"reaches_app": true}
+    },
+    {
+      "name": "a position the app has dropped is unavailable, naming the oldest it holds",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+          "history": {"oldest": 3, "newest": 9}},
+        "navigate": {"to": {"kind": "position", "position": 2}}
+      },
+      "expect": {"answer": {"unavailable": {"position": 2, "grade": null, "oldest": 3}}}
+    },
+    {
+      "name": "a position past the newest was never had",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+          "history": {"oldest": 3, "newest": 9}},
+        "navigate": {"to": {"kind": "position", "position": 10}}
+      },
+      "expect": {"answer": {"refused": {"code": "unknown_position", "subject": "10"}}}
+    },
+    {
+      "name": "positions start at one",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+          "history": {"oldest": 1, "newest": 9}},
+        "navigate": {"to": {"kind": "position", "position": 0}}
+      },
+      "expect": {"answer": {"refused": {"code": "unknown_position", "subject": "0"}}}
+    },
+    {
+      "name": "an app that holds no position has none to show",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+          "history": {}},
+        "navigate": {"to": {"kind": "position", "position": 1}}
+      },
+      "expect": {"answer": {"refused": {"code": "unknown_position", "subject": "1"}}}
+    },
+    {
+      "name": "an app whose offer does not name ui/history",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/observe", "fingerprint": "fp"}]},
+        "navigate": {"to": {"kind": "live"}}
+      },
+      "expect": {"answer": {"refused": {"code": "no_history_interface", "subject": "ui/history"}}}
+    }
+  ]
+}

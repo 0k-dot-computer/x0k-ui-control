@@ -1,0 +1,33 @@
+{
+  "source": "implementation/sync/operation-session.md",
+  "source_hash": "ff781397d5aa5f8d",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "3cd27a3a5cbac687",
+      "outputs": [
+        {
+          "path": "crates/x0k-operation-wire/src/session.rs",
+          "hash": "bb0d627711b0bc05"
+        },
+        {
+          "path": "crates/x0k-operation-session/src/session.rs",
+          "hash": "d200dfa4e84f84b1"
+        },
+        {
+          "path": "crates/x0k-operation-session/Cargo.toml",
+          "hash": "50f50e9be8757e8d"
+        },
+        {
+          "path": "crates/x0k-operation-session/src/lib.rs",
+          "hash": "1c5a80a708fa10b9"
+        },
+        {
+          "path": "crates/x0k-operation-session/benches/session_call.rs",
+          "hash": "46bd2782965f2699"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "source": "implementation/sync/operation-wire-anywhere.md",
+  "source_hash": "405db665405e235e",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "aaf127240956a56f",
+      "outputs": [
+        {
+          "path": "crates/x0k-operation-wire/Cargo.toml",
+          "hash": "edb79f4e9cfcaf4e"
+        },
+        {
+          "path": "crates/x0k-operation-wire/src/lib.rs",
+          "hash": "bb9cbee49632089a"
+        },
+        {
+          "path": "crates/x0k-operation-wire/src/class.rs",
+          "hash": "cf5b6fdd2ba117f2"
+        }
+      ]
+    }
+  ]
+}

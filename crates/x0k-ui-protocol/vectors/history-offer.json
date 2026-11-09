@@ -1,0 +1,40 @@
+{
+  "clause": "ui-interfaces §5",
+  "check": "history.offer",
+  "about": "An offer says what it holds of its history exactly when it names ui/history, with an oldest position no newer than its newest. The answer is {fits: true} or {fits: false, fault}.",
+  "vectors": [
+    {
+      "name": "an offer naming ui/history says which positions it holds",
+      "input": {"offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+        "history": {"oldest": 2, "newest": 5, "fixtures": false}}},
+      "expect": {"fits": true}
+    },
+    {
+      "name": "an app that holds no position yet names neither end",
+      "input": {"offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+        "history": {}}},
+      "expect": {"fits": true}
+    },
+    {
+      "name": "an offer without ui/history says nothing of a history",
+      "input": {"offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/observe", "fingerprint": "fp"}]}},
+      "expect": {"fits": true}
+    },
+    {
+      "name": "an offer naming ui/history and saying nothing of what it holds",
+      "input": {"offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}]}},
+      "expect": {"fits": false, "fault": "missing"}
+    },
+    {
+      "name": "a history in an offer that does not name ui/history",
+      "input": {"offer": {"app": "demo", "instance": "1", "interfaces": [], "history": {"oldest": 1, "newest": 1}}},
+      "expect": {"fits": false, "fault": "unasked"}
+    },
+    {
+      "name": "an oldest position newer than the newest",
+      "input": {"offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/history", "fingerprint": "fp"}],
+        "history": {"oldest": 6, "newest": 5}}},
+      "expect": {"fits": false, "fault": "backwards"}
+    }
+  ]
+}

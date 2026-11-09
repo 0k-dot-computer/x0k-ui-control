@@ -1,0 +1,74 @@
+{
+  "clause": "ui-control-channel §9",
+  "check": "act.check",
+  "about": "A driver invokes only what the offer lists, inside its grant, with arguments that fit the action's shape, and each is refused by name before the app runs anything. The answer is {runs: action} or {refused}.",
+  "vectors": [
+    {
+      "name": "a listed action, inside the grant, with arguments that fit",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/act", "fingerprint": "fp"}],
+          "actions": [{"name": "chat.send", "description": "Send the message", "side_effect": "non_idempotent",
+            "args": {"kind": "struct", "open": false, "fields": {"text": {"shape": {"kind": "text"}}}},
+            "result": {"kind": "null"}}]},
+        "grant": {"classes": ["read_only", "idempotent_write", "non_idempotent"]},
+        "invoke": {"action": "chat.send", "args": {"text": "hello"}}
+      },
+      "expect": {"runs": "chat.send"}
+    },
+    {
+      "name": "an action the offer does not list",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/act", "fingerprint": "fp"}], "actions": []},
+        "grant": {"classes": ["read_only"]},
+        "invoke": {"action": "chat.delete", "args": null}
+      },
+      "expect": {"refused": {"code": "unknown_action", "subject": "chat.delete"}}
+    },
+    {
+      "name": "an action outside the grant's classes",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/act", "fingerprint": "fp"}],
+          "actions": [{"name": "chat.send", "description": "Send the message", "side_effect": "non_idempotent",
+            "args": {"kind": "any"}, "result": {"kind": "null"}}]},
+        "grant": {"classes": ["read_only"]},
+        "invoke": {"action": "chat.send", "args": {"text": "hello"}}
+      },
+      "expect": {"refused": {"code": "outside_grant", "subject": "chat.send"}}
+    },
+    {
+      "name": "a read-only grant still asks the app things through its own actions",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/act", "fingerprint": "fp"}],
+          "actions": [{"name": "chat.count", "description": "Count messages", "side_effect": "read_only",
+            "args": {"kind": "any"}, "result": {"kind": "int"}}]},
+        "grant": {"classes": ["read_only"]},
+        "invoke": {"action": "chat.count", "args": null}
+      },
+      "expect": {"runs": "chat.count"}
+    },
+    {
+      "name": "arguments that misfit the action's shape",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/act", "fingerprint": "fp"}],
+          "actions": [{"name": "chat.send", "description": "Send the message", "side_effect": "non_idempotent",
+            "args": {"kind": "struct", "open": false, "fields": {"text": {"shape": {"kind": "text"}}}},
+            "result": {"kind": "null"}}]},
+        "grant": {"classes": ["non_idempotent"]},
+        "invoke": {"action": "chat.send", "args": {"text": 3}}
+      },
+      "expect": {"refused": {"code": "misfit_arguments"}}
+    },
+    {
+      "name": "an argument the closed shape does not name",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/act", "fingerprint": "fp"}],
+          "actions": [{"name": "chat.send", "description": "Send the message", "side_effect": "non_idempotent",
+            "args": {"kind": "struct", "open": false, "fields": {"text": {"shape": {"kind": "text"}}}},
+            "result": {"kind": "null"}}]},
+        "grant": {"classes": ["non_idempotent"]},
+        "invoke": {"action": "chat.send", "args": {"text": "hello", "urgent": true}}
+      },
+      "expect": {"refused": {"code": "misfit_arguments"}}
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "clause": "ui-control-channel §10",
+  "check": "input.check",
+  "about": "A sequence is refused by name before any of it runs. Pointer positions are in a frame's pixels, and a layout node resolves to the centre of its bounds. The answer is {resolved: positions} or {refused}.",
+  "vectors": [
+    {
+      "name": "a click on a layout node lands on the centre of its bounds",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f1", "width": 800, "height": 600,
+          "layout": {"id": "root", "role": "window", "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "visible": true, "enabled": true, "focused": false, "interactive": false,
+            "children": [{"id": "send", "role": "button", "bounds": {"x": 700, "y": 550, "width": 80, "height": 40},
+              "visible": true, "enabled": true, "focused": false, "interactive": true}]}}],
+        "perform": {"sources": [{"id": "m", "kind": "mouse", "steps": [
+          {"do": "move", "to": {"frame": "f1", "node": "send"}},
+          {"do": "down", "button": 0},
+          {"do": "up", "button": 0}]}]}
+      },
+      "expect": {"resolved": [{"source": "m", "step": 0, "x": 740.0, "y": 570.0}]}
+    },
+    {
+      "name": "two touches are two sources",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f1", "width": 100, "height": 100}],
+        "perform": {"sources": [
+          {"id": "t1", "kind": "touch", "steps": [{"do": "move", "to": {"frame": "f1", "x": 10, "y": 10}}, {"do": "down", "button": 0}]},
+          {"id": "t2", "kind": "touch", "steps": [{"do": "move", "to": {"frame": "f1", "x": 90, "y": 90}}, {"do": "down", "button": 0}]}]}
+      },
+      "expect": {"resolved": [{"source": "t1", "step": 0, "x": 10.0, "y": 10.0}, {"source": "t2", "step": 0, "x": 90.0, "y": 90.0}]}
+    },
+    {
+      "name": "typing a character and a named key",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"sources": [{"id": "k", "kind": "key", "steps": [
+          {"do": "key_down", "key": "é"}, {"do": "key_up", "key": "é"},
+          {"do": "pause", "ms": 10},
+          {"do": "key_down", "key": "Enter"}, {"do": "key_up", "key": "Enter"}]}]}
+      },
+      "expect": {"resolved": []}
+    },
+    {
+      "name": "an app whose offer does not name ui/input",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/observe", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"sources": []}
+      },
+      "expect": {"refused": {"code": "no_input_interface", "subject": "ui/input"}}
+    },
+    {
+      "name": "a source of a kind the model does not have",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"sources": [{"id": "g", "kind": "gamepad", "steps": []}]}
+      },
+      "expect": {"refused": {"code": "unknown_source", "subject": "gamepad"}}
+    },
+    {
+      "name": "two sources with one id",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"sources": [{"id": "a", "kind": "mouse", "steps": []}, {"id": "a", "kind": "touch", "steps": []}]}
+      },
+      "expect": {"refused": {"code": "duplicate_source", "subject": "a"}}
+    },
+    {
+      "name": "a step its source cannot perform",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"sources": [{"id": "m", "kind": "mouse", "steps": [{"do": "key_down", "key": "a"}]}]}
+      },
+      "expect": {"refused": {"code": "wrong_source", "subject": "m"}}
+    },
+    {
+      "name": "an unknown key",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"sources": [{"id": "k", "kind": "key", "steps": [{"do": "key_down", "key": "Hyper"}]}]}
+      },
+      "expect": {"refused": {"code": "unknown_key", "subject": "Hyper"}}
+    },
+    {
+      "name": "a position outside the frame",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f1", "width": 100, "height": 100}],
+        "perform": {"sources": [{"id": "m", "kind": "mouse", "steps": [{"do": "move", "to": {"frame": "f1", "x": 100, "y": 5}}]}]}
+      },
+      "expect": {"refused": {"code": "outside_frame", "subject": "f1"}}
+    },
+    {
+      "name": "a frame the app no longer holds",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f2", "width": 100, "height": 100}],
+        "perform": {"sources": [{"id": "m", "kind": "mouse", "steps": [{"do": "move", "to": {"frame": "f1", "x": 5, "y": 5}}]}]}
+      },
+      "expect": {"refused": {"code": "unknown_frame", "subject": "f1"}}
+    },
+    {
+      "name": "a layout node the named frame does not hold",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f1", "width": 100, "height": 100}],
+        "perform": {"sources": [{"id": "m", "kind": "mouse", "steps": [{"do": "move", "to": {"frame": "f1", "node": "gone"}}]}]}
+      },
+      "expect": {"refused": {"code": "unknown_node", "subject": "gone"}}
+    },
+    {
+      "name": "one bad step refuses the whole sequence, so nothing resolves",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f1", "width": 100, "height": 100}],
+        "perform": {"sources": [{"id": "m", "kind": "mouse", "steps": [
+          {"do": "move", "to": {"frame": "f1", "x": 5, "y": 5}},
+          {"do": "move", "to": {"frame": "f1", "x": 500, "y": 5}}]}]}
+      },
+      "expect": {"refused": {"code": "outside_frame"}}
+    }
+  ]
+}

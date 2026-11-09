@@ -1,0 +1,37 @@
+{
+  "clause": "ui-interfaces §2",
+  "check": "history.while_shown",
+  "about": "While an app shows a past position it refuses every ui/input call and every ui/act action above read_only as showing_past, naming the position; live, a state fixture and a read-only action run. side_effect is absent for a ui/input call. The answer is {runs: true} or {refused}.",
+  "vectors": [
+    {
+      "name": "input while a past position is shown",
+      "input": {"shown": {"kind": "position", "position": 4}},
+      "expect": {"refused": {"code": "showing_past", "subject": "4"}}
+    },
+    {
+      "name": "an idempotent write while a past position is shown",
+      "input": {"shown": {"kind": "position", "position": 4}, "side_effect": "idempotent_write"},
+      "expect": {"refused": {"code": "showing_past", "subject": "4"}}
+    },
+    {
+      "name": "a non-idempotent action while a past position is shown",
+      "input": {"shown": {"kind": "position", "position": 4}, "side_effect": "non_idempotent"},
+      "expect": {"refused": {"code": "showing_past", "subject": "4"}}
+    },
+    {
+      "name": "a read-only action runs while a past position is shown",
+      "input": {"shown": {"kind": "position", "position": 4}, "side_effect": "read_only"},
+      "expect": {"runs": true}
+    },
+    {
+      "name": "input to the live state",
+      "input": {"shown": {"kind": "live"}},
+      "expect": {"runs": true}
+    },
+    {
+      "name": "input while a state fixture stands drives the fixture",
+      "input": {"shown": {"kind": "fixture", "handle": "x1"}, "side_effect": "non_idempotent"},
+      "expect": {"runs": true}
+    }
+  ]
+}

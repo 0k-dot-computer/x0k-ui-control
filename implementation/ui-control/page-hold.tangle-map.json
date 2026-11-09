@@ -1,0 +1,57 @@
+{
+  "source": "implementation/ui-control/page-hold.md",
+  "source_hash": "f130a90a8a417482",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "fe9dd28bacadd85a",
+      "outputs": [
+        {
+          "path": "substrate/apps/ui-control-page/src/hold.ts",
+          "hash": "f7ded49f0d68dfb2"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/src/drawn-layer.ts",
+          "hash": "d67bd39a1ee99115"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/src/held-capture.ts",
+          "hash": "9d64bb62b0b10551"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/src/page-script.ts",
+          "hash": "fe410f52ce2bdc93"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/probe-page.html",
+          "hash": "cd26a4e3f191aa75"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/hosts/probe-judge.ts",
+          "hash": "426821652e2f6e9f"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/probe.test.ts",
+          "hash": "3244b1882d6812ce"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/hosts/chromium.ts",
+          "hash": "46a33c028f1db38b"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/hosts/webkitgtk_host.py",
+          "hash": "7965a9d9a57c67ca"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/hosts/webkitgtk.ts",
+          "hash": "c44498dd4d29c262"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/hosts/engine.ts",
+          "hash": "01c39c7143051d0b"
+        }
+      ]
+    }
+  ]
+}

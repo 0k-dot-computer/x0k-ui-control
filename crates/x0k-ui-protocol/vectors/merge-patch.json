@@ -1,0 +1,309 @@
+{
+  "clause": "ui-interfaces §4",
+  "check": "fixture.merge_patch",
+  "about": "A state fixture may be a JSON Merge Patch over the live state (RFC 7396). These are the RFC's own examples, from its Appendix A: a patch object changes the target field by field, a null removes its field, and any other patch replaces the target. The answer is {result, paths}: paths lists every member of the result as a JSON Pointer, sorted, so a field the patch should have removed cannot hide.",
+  "vectors": [
+    {
+      "name": "RFC 7396 appendix A, example 1",
+      "input": {
+        "target": {
+          "a": "b"
+        },
+        "patch": {
+          "a": "c"
+        }
+      },
+      "expect": {
+        "result": {
+          "a": "c"
+        },
+        "paths": [
+          "/a"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 2",
+      "input": {
+        "target": {
+          "a": "b"
+        },
+        "patch": {
+          "b": "c"
+        }
+      },
+      "expect": {
+        "result": {
+          "a": "b",
+          "b": "c"
+        },
+        "paths": [
+          "/a",
+          "/b"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 3",
+      "input": {
+        "target": {
+          "a": "b"
+        },
+        "patch": {
+          "a": null
+        }
+      },
+      "expect": {
+        "result": {},
+        "paths": []
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 4",
+      "input": {
+        "target": {
+          "a": "b",
+          "b": "c"
+        },
+        "patch": {
+          "a": null
+        }
+      },
+      "expect": {
+        "result": {
+          "b": "c"
+        },
+        "paths": [
+          "/b"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 5",
+      "input": {
+        "target": {
+          "a": [
+            "b"
+          ]
+        },
+        "patch": {
+          "a": "c"
+        }
+      },
+      "expect": {
+        "result": {
+          "a": "c"
+        },
+        "paths": [
+          "/a"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 6",
+      "input": {
+        "target": {
+          "a": "c"
+        },
+        "patch": {
+          "a": [
+            "b"
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "a": [
+            "b"
+          ]
+        },
+        "paths": [
+          "/a"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 7",
+      "input": {
+        "target": {
+          "a": {
+            "b": "c"
+          }
+        },
+        "patch": {
+          "a": {
+            "b": "d",
+            "c": null
+          }
+        }
+      },
+      "expect": {
+        "result": {
+          "a": {
+            "b": "d"
+          }
+        },
+        "paths": [
+          "/a",
+          "/a/b"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 8",
+      "input": {
+        "target": {
+          "a": [
+            {
+              "b": "c"
+            }
+          ]
+        },
+        "patch": {
+          "a": [
+            1
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "a": [
+            1
+          ]
+        },
+        "paths": [
+          "/a"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 9",
+      "input": {
+        "target": [
+          "a",
+          "b"
+        ],
+        "patch": [
+          "c",
+          "d"
+        ]
+      },
+      "expect": {
+        "result": [
+          "c",
+          "d"
+        ],
+        "paths": []
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 10",
+      "input": {
+        "target": {
+          "a": "b"
+        },
+        "patch": [
+          "c"
+        ]
+      },
+      "expect": {
+        "result": [
+          "c"
+        ],
+        "paths": []
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 11",
+      "input": {
+        "target": {
+          "a": "foo"
+        },
+        "patch": null
+      },
+      "expect": {
+        "result": null,
+        "paths": []
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 12",
+      "input": {
+        "target": {
+          "a": "foo"
+        },
+        "patch": "bar"
+      },
+      "expect": {
+        "result": "bar",
+        "paths": []
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 13",
+      "input": {
+        "target": {
+          "e": null
+        },
+        "patch": {
+          "a": 1
+        }
+      },
+      "expect": {
+        "result": {
+          "e": null,
+          "a": 1
+        },
+        "paths": [
+          "/a",
+          "/e"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 14",
+      "input": {
+        "target": [
+          1,
+          2
+        ],
+        "patch": {
+          "a": "b",
+          "c": null
+        }
+      },
+      "expect": {
+        "result": {
+          "a": "b"
+        },
+        "paths": [
+          "/a"
+        ]
+      }
+    },
+    {
+      "name": "RFC 7396 appendix A, example 15",
+      "input": {
+        "target": {},
+        "patch": {
+          "a": {
+            "bb": {
+              "ccc": null
+            }
+          }
+        }
+      },
+      "expect": {
+        "result": {
+          "a": {
+            "bb": {}
+          }
+        },
+        "paths": [
+          "/a",
+          "/a/bb"
+        ]
+      }
+    }
+  ]
+}

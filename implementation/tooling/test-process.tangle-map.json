@@ -1,0 +1,21 @@
+{
+  "source": "implementation/tooling/test-process.md",
+  "source_hash": "86cc11d0eac626d9",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "641fb609a65a78b0",
+      "outputs": [
+        {
+          "path": "crates/x0k-test-process/Cargo.toml",
+          "hash": "11a7ec726517fbc7"
+        },
+        {
+          "path": "crates/x0k-test-process/src/lib.rs",
+          "hash": "ad0b93354db5bd7e"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "source": "implementation/ui-control/page-walk.md",
+  "source_hash": "3063aebbaaa18623",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "f541db82c930ffb9",
+      "outputs": [
+        {
+          "path": "substrate/apps/ui-control-page/src/observation.ts",
+          "hash": "d597740c27e05cae"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/src/walk.ts",
+          "hash": "6b4845343a7fb7f7"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/src/page-globals.ts",
+          "hash": "b16974edecbfac48"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/src/page.ts",
+          "hash": "8492ce73bf8b5663"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/walk-page.html",
+          "hash": "b2b6138156356d0f"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/walk.test.ts",
+          "hash": "acf9397678e220ce"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/hosts/zerok.ts",
+          "hash": "88252f49b5745e1e"
+        }
+      ]
+    }
+  ]
+}

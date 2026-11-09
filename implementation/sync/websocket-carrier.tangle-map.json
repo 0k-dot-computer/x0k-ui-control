@@ -1,0 +1,21 @@
+{
+  "source": "implementation/sync/websocket-carrier.md",
+  "source_hash": "67dacf619f586f16",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "c4da7d32ec1f30e4",
+      "outputs": [
+        {
+          "path": "crates/x0k-operation-session/src/websocket.rs",
+          "hash": "ac566840401ce7a1"
+        },
+        {
+          "path": "crates/x0k-operation-session/tests/websocket.rs",
+          "hash": "7b82996ff05afd9d"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "source": "implementation/tooling/runtime-dir.md",
+  "source_hash": "e8eb6dfc7b1cecf5",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "83fdc9c4ffd99d1b",
+      "outputs": [
+        {
+          "path": "crates/x0k-runtime-dir/Cargo.toml",
+          "hash": "c1908990c56cbe8c"
+        },
+        {
+          "path": "crates/x0k-runtime-dir/src/lib.rs",
+          "hash": "87b25a26842ec4ce"
+        }
+      ]
+    }
+  ]
+}

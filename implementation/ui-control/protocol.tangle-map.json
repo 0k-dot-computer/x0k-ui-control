@@ -1,0 +1,73 @@
+{
+  "source": "implementation/ui-control/protocol.md",
+  "source_hash": "2da6dcff6407ff79",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "6d4f941b1dbd67fc",
+      "outputs": [
+        {
+          "path": "crates/x0k-ui-protocol/Cargo.toml",
+          "hash": "6c9ab3e8f9686ce2"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/lib.rs",
+          "hash": "52e4000770b38908"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/offer.rs",
+          "hash": "dcf46a72047a62af"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/observe.rs",
+          "hash": "0d8d7bf567039986"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/act.rs",
+          "hash": "249704372733bd26"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/input.rs",
+          "hash": "d191b8e8456c1fd6"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/history.rs",
+          "hash": "b64e4d50a08fe358"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/fixture.rs",
+          "hash": "a7d7d12cd7926a24"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/replay.rs",
+          "hash": "aa9ed6aa6c5e59ed"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/marks.rs",
+          "hash": "57fa16fe76c70714"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/presentation.rs",
+          "hash": "5769a646986b2f9a"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/page.rs",
+          "hash": "956fbf887a3349b2"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/shapes.rs",
+          "hash": "99cae865188d00f4"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/tests/shapes.rs",
+          "hash": "d268b6d71d757ea5"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/tests/conformance.rs",
+          "hash": "3a048dd977628ce5"
+        }
+      ]
+    }
+  ]
+}

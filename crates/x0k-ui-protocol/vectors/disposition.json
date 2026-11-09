@@ -1,0 +1,879 @@
+{
+  "clause": "ui-interfaces §4 and §5",
+  "check": "replay.disposition",
+  "about": "The disposition an effect takes on a trip, from the offer's replay policy: an entry for the action, then one for its class, then graded-introspection §9's default. Under vary a read_only effect is performed, since a state fixture has no record to answer it from; an idempotent_write is sandboxed where a declared sandbox serves it and otherwise simulated; a non_idempotent is simulated. After the cut of a continue, everything is performed. The answer is {taken: {disposition, sandbox}}.",
+  "vectors": [
+    {
+      "name": "a read_only effect under vary is performed, since a fixture has no record",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "read_only",
+        "action": "count"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "performed",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "an idempotent_write effect under vary is sandboxed where a sandbox serves it",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "idempotent_write",
+        "action": "save"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "sandboxed",
+          "sandbox": "scratch"
+        }
+      }
+    },
+    {
+      "name": "an idempotent_write effect under vary is simulated where none does",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [],
+          "sandboxes": []
+        },
+        "purpose": "vary",
+        "side_effect": "idempotent_write",
+        "action": "save"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "simulated",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "a non_idempotent effect under vary is simulated",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "non_idempotent",
+        "action": "send"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "simulated",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "an effect after the cut of a continue is performed",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "continue",
+        "side_effect": "non_idempotent",
+        "action": "send"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "performed",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "an entry for a class changes its default",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "read_only"
+              },
+              "vary": "refused"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "read_only",
+        "action": "count"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "refused",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "an entry for an action wins over its class's",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "non_idempotent"
+              },
+              "vary": "refused"
+            },
+            {
+              "covers": {
+                "kind": "action",
+                "action": "send"
+              },
+              "vary": "simulated"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "non_idempotent",
+        "action": "send"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "simulated",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "the class's entry still covers the class's other actions",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "class",
+                "class": "non_idempotent"
+              },
+              "vary": "refused"
+            },
+            {
+              "covers": {
+                "kind": "action",
+                "action": "send"
+              },
+              "vary": "simulated"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "non_idempotent",
+        "action": "post"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "refused",
+          "sandbox": null
+        }
+      }
+    },
+    {
+      "name": "an entry silent on the purpose leaves the default",
+      "input": {
+        "offer": {
+          "app": "app",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "f"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "f"
+            }
+          ],
+          "state_head": "s3",
+          "history": {
+            "oldest": 1,
+            "newest": 3,
+            "fixtures": true
+          },
+          "actions": [
+            {
+              "name": "send",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "post",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "non_idempotent"
+            },
+            {
+              "name": "save",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "idempotent_write"
+            },
+            {
+              "name": "count",
+              "description": "",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              },
+              "side_effect": "read_only"
+            }
+          ],
+          "replay_policy": [
+            {
+              "covers": {
+                "kind": "action",
+                "action": "send"
+              },
+              "continue_after_cut": "refused"
+            }
+          ],
+          "sandboxes": [
+            {
+              "name": "scratch",
+              "description": "a throwaway workspace",
+              "serves": [
+                {
+                  "kind": "class",
+                  "class": "idempotent_write"
+                }
+              ]
+            }
+          ]
+        },
+        "purpose": "vary",
+        "side_effect": "non_idempotent",
+        "action": "send"
+      },
+      "expect": {
+        "taken": {
+          "disposition": "simulated",
+          "sandbox": null
+        }
+      }
+    }
+  ]
+}

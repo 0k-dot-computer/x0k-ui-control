@@ -1,0 +1,17 @@
+{
+  "source": "implementation/ui-control/websocket.md",
+  "source_hash": "44d98f43f2cdd08e",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "777b107586847742",
+      "outputs": [
+        {
+          "path": "crates/x0k-ui-endpoint/tests/websocket.rs",
+          "hash": "147fab28505795a6"
+        }
+      ]
+    }
+  ]
+}

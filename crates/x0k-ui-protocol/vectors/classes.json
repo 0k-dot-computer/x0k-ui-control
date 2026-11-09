@@ -1,0 +1,88 @@
+{
+  "clause": "ui-interfaces §1",
+  "check": "operation.class",
+  "about": "The side-effect class each operation of the four UI interfaces declares. navigate, present and release are writes though they perform nothing in the world: they change what the app shows, and calling one twice leaves the app where calling it once does. The answer is {side_effect}, null for invoke, which takes the class of the action it invokes.",
+  "vectors": [
+    {
+      "name": "ui/observe.offer declares read_only",
+      "input": {
+        "operation": "ui/observe.offer"
+      },
+      "expect": {
+        "side_effect": "read_only"
+      }
+    },
+    {
+      "name": "ui/observe.observe declares read_only",
+      "input": {
+        "operation": "ui/observe.observe"
+      },
+      "expect": {
+        "side_effect": "read_only"
+      }
+    },
+    {
+      "name": "ui/act.invoke takes the class of the action it invokes",
+      "input": {
+        "operation": "ui/act.invoke"
+      },
+      "expect": {
+        "side_effect": null
+      }
+    },
+    {
+      "name": "ui/input.perform declares non_idempotent",
+      "input": {
+        "operation": "ui/input.perform"
+      },
+      "expect": {
+        "side_effect": "non_idempotent"
+      }
+    },
+    {
+      "name": "ui/history.history declares read_only",
+      "input": {
+        "operation": "ui/history.history"
+      },
+      "expect": {
+        "side_effect": "read_only"
+      }
+    },
+    {
+      "name": "ui/history.navigate declares idempotent_write",
+      "input": {
+        "operation": "ui/history.navigate"
+      },
+      "expect": {
+        "side_effect": "idempotent_write"
+      }
+    },
+    {
+      "name": "ui/history.present declares idempotent_write",
+      "input": {
+        "operation": "ui/history.present"
+      },
+      "expect": {
+        "side_effect": "idempotent_write"
+      }
+    },
+    {
+      "name": "ui/history.release declares idempotent_write",
+      "input": {
+        "operation": "ui/history.release"
+      },
+      "expect": {
+        "side_effect": "idempotent_write"
+      }
+    },
+    {
+      "name": "an operation the protocol does not name declares no class",
+      "input": {
+        "operation": "ui/nothing.at_all"
+      },
+      "expect": {
+        "side_effect": null
+      }
+    }
+  ]
+}

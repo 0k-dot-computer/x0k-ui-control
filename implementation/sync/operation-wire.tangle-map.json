@@ -1,0 +1,21 @@
+{
+  "source": "implementation/sync/operation-wire.md",
+  "source_hash": "228694ae3c04df19",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "e1fba1cb3fa02ec1",
+      "outputs": [
+        {
+          "path": "crates/x0k-operation-wire/src/frame.rs",
+          "hash": "96f4302c1656604c"
+        },
+        {
+          "path": "crates/x0k-operation-session/src/wire.rs",
+          "hash": "00e777fb7e6b5c89"
+        }
+      ]
+    }
+  ]
+}
