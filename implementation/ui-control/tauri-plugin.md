@@ -121,7 +121,7 @@ command and permission names, from the package name, so the plugin is
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-tauri"
-version = "0.2.0"
+version = "0.2.1"
 edition = { workspace = true }
 license = "MIT"
 description = "A Tauri plugin that holds a Tauri app's page still and captures it natively, for the UI-control endpoint."
@@ -166,7 +166,7 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "objc2-core-graphics", "NSBitmapImageRep", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGEvent", "CGEventSource", "CGEventTypes", "CGImage", "CGRemoteOperation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSProcessInfo", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSNotification", "NSProcessInfo", "NSString"] }
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKPreferences", "WKSnapshotConfiguration", "WKWebView", "WKWebViewConfiguration"] }
 
 [build-dependencies]
@@ -447,7 +447,7 @@ that carries the request holds it, so a frame in the page cannot answer for
 the page.
 
 The plugin keeps each waiting request by its nonce, with the label of the
-webview it went to and the channel its answer goes back on.
+webview it went to and the Tauri channel its answer goes back on.
 
 <a name="chunk-pending"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#pending`</sub>
 
@@ -1013,7 +1013,7 @@ fn main() {
 
 WebKitGTK's snapshot runs on GTK's main thread, so the plugin asks for it
 through `with_webview`, which runs there, and the answer comes back on a
-channel. The snapshot paints the visible region afresh from the page as it
+Tauri channel. The snapshot paints the visible region afresh from the page as it
 stands (webview design, "Measured on arca"), which is the held state. It also
 reads the widget's allocated width there, so the capture says its own scale:
 its pixels per widget unit, which input divides by. Its PNG, which an
@@ -2022,8 +2022,9 @@ until the window comes forward, so before the library bounded its waits, an
 observation and an action of a covered window waited out the plugin's 5 s and
 failed. The snapshot itself is not the cause: `takeSnapshot` answers whenever
 the page paints, with no Screen Recording grant. This is chariot's research of
-2026-11-10, from the projects listed below, and none of it is measured on
-x0k's Mac yet.
+2026-11-10, from the projects listed below; of the window states, only a
+window on another Space is measured on the Mac (below, "What is shown, and
+what is open").
 
 Two switches keep a covered window painting. Both are needed (reported):
 
@@ -2031,8 +2032,8 @@ Two switches keep a covered window painting. Both are needed (reported):
    then stops counting a covered window as hidden, so the page keeps painting
    and its frames run. One project measured 0 frames a second for a fully
    covered window before and 62 after; another reports the same for a window
-   on another Space. One report says it takes effect only if set before the
-   view joins its window.
+   on another Space. It only stores a flag, which WebKit reads at the
+   window's next visibility event (below).
 2. **`WKPreferences.inactiveSchedulingPolicy = .none`**, public from macOS
    14. It stops WebKit suspending a hidden page's process; one report saw
    the default policy stop a hidden page after a few minutes. It does not
@@ -2043,14 +2044,19 @@ Two switches keep a covered window painting. Both are needed (reported):
 
 The plugin turns both on while a driver is connected to the endpoint, and
 gives WebKit its own policy back when the last driver leaves
-(`CoveredPainting::WhileDriven`, the default). Since the first switch may
-take effect only before the view joins its window, an app that is driven from
-its start can ask for both from when its webview is made, for its life,
-with `ui_plugin_with(app, label, CoveredPainting::FromCreation)`; the plugin
-sets them as Tauri hands it the new webview, which is the earliest a plugin is
-told of it. Which of the two works is the Mac's to measure (below, "What is
-shown, and what is open"). `CoveredPainting::Off` leaves WebKit's policy
-alone.
+(`CoveredPainting::WhileDriven`, the default). WebKit reads whether its view
+is visible only when the window tells it something changed: an occlusion
+change, ordering on or off screen, minimising, a change of Space
+(`WKWindowVisibilityObserver` in WebKit's `WebViewImpl.mm`; the reading is
+`PageClientImpl::isViewVisible`). The switch alone would leave a window that
+is already off screen when the driver connects reading `hidden`, so after
+turning it either way the plugin posts the window's
+`NSWindowDidChangeOcclusionStateNotification`, and WebKit, with the window's
+delegate, reads the window's state again at once. An app that is driven from
+its start can ask for both switches from when its webview is made, for its
+life, with `ui_plugin_with(app, label, CoveredPainting::FromCreation)`; the
+plugin sets them as Tauri hands it the new webview, which is the earliest a
+plugin is told of it. `CoveredPainting::Off` leaves WebKit's policy alone.
 
 The private selector is guarded: the plugin sends it only to a view that
 answers it, and logs whether it did, so a WebKit without it costs nothing but
@@ -2073,6 +2079,8 @@ use std::sync::{Mutex, PoisonError};
 
 use objc2::runtime::{NSObjectProtocol, Sel};
 use objc2::{msg_send, sel};
+use objc2_app_kit::NSWindowDidChangeOcclusionStateNotification;
+use objc2_foundation::NSNotificationCenter;
 use objc2_web_kit::{WKInactiveSchedulingPolicy, WKWebView};
 use tauri::{Runtime, Webview};
 
@@ -2097,6 +2105,14 @@ pub(crate) fn keep_painting<R: Runtime>(webview: &Webview<R>, on: bool) {
             // SAFETY: the view answers the selector, just asked; it takes one
             // BOOL and returns nothing.
             let () = unsafe { msg_send![view, _setWindowOcclusionDetectionEnabled: !on] };
+            // WebKit reads whether the view is visible again only on the
+            // window's next visibility event: the window's occlusion
+            // notification makes it, and the window's delegate, read now.
+            if let Some(window) = view.window() {
+                // SAFETY: the name is AppKit's constant and the window is the
+                // view's own, alive on the main thread.
+                unsafe { NSNotificationCenter::defaultCenter().postNotificationName_object(NSWindowDidChangeOcclusionStateNotification, Some(&window)) };
+            }
         }
         // SAFETY: the configuration and its preferences are the view's own,
         // alive with it, read on the main thread.
@@ -2959,7 +2975,7 @@ because a Tauri app needs a build script of its own, and it is never shipped.
 ```toml {#probe-manifest file="probe-app/Cargo.toml"}
 [package]
 name = "x0k-ui-tauri-probe"
-version = "0.2.0"
+version = "0.2.1"
 edition = { workspace = true }
 license = "MIT"
 description = "A minimal Tauri app holding the probe page, for x0k-ui-tauri's probe test."
@@ -2974,7 +2990,7 @@ serde_json = "1"
 tauri = { version = "2.12", default-features = false, features = ["wry", "x11"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 x0k-ui-protocol = { path = "../../x0k-ui-protocol", version = "0.2.0" }
-x0k-ui-tauri = { path = "..", version = "0.2.0" }
+x0k-ui-tauri = { path = "..", version = "0.2.1" }
 # The client a driver calls the app's own endpoint through, for the probe's `endpoint` request.
 x0k-ui-endpoint = { path = "../../x0k-ui-endpoint", version = "0.2.0" }
 
@@ -4395,10 +4411,15 @@ named keys, and every click is a single click, so a double click is two single
 ones. The Windows webview, WebView2 through CDP, is not built.
 
 **The Mac must verify the covered-window switches** ("Keeping a covered
-window painting"). Nothing here is measured on macOS: arca has no
-`aarch64-apple-darwin` standard library, so the macOS code was not even
-compiled. The 0.2 release does not wait on it; a patch follows. On the Mac,
-in the `x0k-ui-tauri` crate:
+window painting"). arca has no `aarch64-apple-darwin` standard library, so
+only the Mac compiles the macOS code. Measured on the Mac with chariot's
+window (chariot's dev instance over 0.2, `WhileDriven`): a window that
+CoreGraphics showed off the active Space, with no driver connected since it
+was made, read `hidden` and refused every capture as `cannot_paint`; with the
+occlusion notification posted after the switch, the same window answered
+captures, `set_theme` re-rendered it, and a click through `perform` changed
+it, each capture showing the change. The rest is open. On the Mac, in the
+`x0k-ui-tauri` crate:
 
 1. `cargo test -p x0k-ui-tauri`: it compiles, and
    `wkwebview_still_answers_the_private_occlusion_switch` holds.
@@ -4411,15 +4432,15 @@ in the `x0k-ui-tauri` crate:
    `counter.read` and one mouse `pause` `perform`:
    - **covered** by another app's window: all three answer, the capture
      showing the page;
-   - **on another Space**: all three answer;
+   - **on another Space**: all three answer (measured, above);
    - **minimised**: the capture refused as `cannot_paint`, layout and state
      answered, and the action and input refused as `cannot_paint`, each in
      well under a second;
    - **screen locked**, and **display asleep** (`pmset displaysleepnow`): the
      same, answered or refused as `cannot_paint` at once, never `did not
      answer`.
-4. If the covered or other-Space window does not answer in step 3 (the
-   before-attach caveat), repeat it with the probe app built with
+4. If the covered window does not answer in step 3, repeat it with the
+   probe app built with
    `ui_plugin_with(APP, "probe", CoveredPainting::FromCreation)`, and record
    which mode works. If only `FromCreation` does, make it the default.
 5. Disconnect the last driver and check `on=false` in the log; a covered

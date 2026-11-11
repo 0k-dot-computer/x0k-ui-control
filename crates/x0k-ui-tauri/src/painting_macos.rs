@@ -5,6 +5,8 @@ use std::sync::{Mutex, PoisonError};
 
 use objc2::runtime::{NSObjectProtocol, Sel};
 use objc2::{msg_send, sel};
+use objc2_app_kit::NSWindowDidChangeOcclusionStateNotification;
+use objc2_foundation::NSNotificationCenter;
 use objc2_web_kit::{WKInactiveSchedulingPolicy, WKWebView};
 use tauri::{Runtime, Webview};
 
@@ -29,6 +31,14 @@ pub(crate) fn keep_painting<R: Runtime>(webview: &Webview<R>, on: bool) {
             // SAFETY: the view answers the selector, just asked; it takes one
             // BOOL and returns nothing.
             let () = unsafe { msg_send![view, _setWindowOcclusionDetectionEnabled: !on] };
+            // WebKit reads whether the view is visible again only on the
+            // window's next visibility event: the window's occlusion
+            // notification makes it, and the window's delegate, read now.
+            if let Some(window) = view.window() {
+                // SAFETY: the name is AppKit's constant and the window is the
+                // view's own, alive on the main thread.
+                unsafe { NSNotificationCenter::defaultCenter().postNotificationName_object(NSWindowDidChangeOcclusionStateNotification, Some(&window)) };
+            }
         }
         // SAFETY: the configuration and its preferences are the view's own,
         // alive with it, read on the main thread.

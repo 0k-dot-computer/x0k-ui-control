@@ -1,5 +1,5 @@
 
-# UI Control Channel
+# UI-Control Wire
 
 ```turtle folio:document
 architecture:ui-control-channel a x0k:Architecture ;
@@ -123,7 +123,7 @@ correlated for free with everything else the timeline holds. The
 transport never re-reads its own past, and no second archive of
 control history exists to drift from the first.
 
-### 4. No store holds the channel
+### 4. No store holds the UI-control wire
 
 The parquet document backend keeps its documented scope: append-only
 columnar history queried analytically — time series, traces, logs. A
@@ -426,7 +426,7 @@ substrate must reconstruct as features: cross-process delivery becomes
 a poll cadence, liveness becomes periodic re-assertion, bounded size
 becomes a retention obligation that must exist and keep running
 forever. Each reconstruction is a standing cost and an independent
-failure point; on a channel, each is simply what the word means. The
+failure point; on a live stream, each is part of what a stream is. The
 same reasoning gives the offer to a latest-value fact plane — facts
 with subscriptions are the decided idiom for "current standing," so
 apps publishing that way makes "what can be driven" one query over one

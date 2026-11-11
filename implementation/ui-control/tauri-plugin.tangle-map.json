@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/tauri-plugin.md",
-  "source_hash": "a94fdc3ad7b853e9",
+  "source_hash": "5dda4e9ea816e81f",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-tauri/Cargo.toml",
-          "hash": "42c52f4de6b7a7a0"
+          "hash": "68fccfb918bb6253"
         },
         {
           "path": "crates/x0k-ui-tauri/src/lib.rs",
@@ -53,7 +53,7 @@
         },
         {
           "path": "crates/x0k-ui-tauri/src/painting_macos.rs",
-          "hash": "c157f4ccde13f1ba"
+          "hash": "b79a499aaf653a44"
         },
         {
           "path": "crates/x0k-ui-tauri/src/endpoint.rs",
@@ -61,7 +61,7 @@
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/Cargo.toml",
-          "hash": "e37eb46a837641e7"
+          "hash": "256f60b6b534804b"
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/tauri.conf.json",
