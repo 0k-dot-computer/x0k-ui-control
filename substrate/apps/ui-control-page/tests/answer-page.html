@@ -7,21 +7,42 @@ main { padding: 20px; }
 <h2 id="count">count 0</h2>
 <button data-ui-action="counter.bump">bump</button>
 </main><script>
-let count = 0;
-const shown = document.getElementById('count');
+/** The live store, its revision, and the store the page shows: the live one, or a fixture. */
+const live = { count: 0 };
+let revision = 0;
+let store = live;
+const label = document.getElementById('count');
+const draw = () => requestAnimationFrame(() => { label.textContent = `count ${store.count}`; });
 const ui = globalThis.__x0kUi.install({
   app: 'answer page',
-  state: { shape: { kind: 'struct', fields: { count: { shape: { kind: 'int' } } } }, read: () => ({ count }) },
+  state: {
+    shape: { kind: 'struct', fields: { count: { shape: { kind: 'int' } } } },
+    read: () => ({ count: store.count }),
+    head: () => `r${revision}`,
+    present: (state) => {
+      if (window.approvalWaiting) throw ui.decline('an approval waits for a person');
+      if (state.count < 0) throw new Error('the page shows no negative count');
+      store = { count: state.count };
+      draw();
+    },
+    release: () => { store = live; draw(); },
+  },
+  declines: () => (window.approvalWaiting ? 'an approval waits for a person' : null),
 });
+/** An approval arrives for a person: the page ends any fixture that stands. */
+window.approvalArrives = (reason) => ui.endFixture(reason);
+window.fixturesHeard = [];
+ui.onFixture((handle) => { window.fixturesHeard.push(handle); });
 ui.action('counter.bump', {
   description: 'Raise the count by `by`, and draw it in the next frame.',
   args: { kind: 'struct', fields: { by: { shape: { kind: 'int' } } } },
   result: { kind: 'int' },
 }, ({ by }) => {
-  count += by;
-  requestAnimationFrame(() => { shown.textContent = `count ${count}`; });
-  return count;
+  store.count += by;
+  if (store === live) revision += 1;
+  draw();
+  return store.count;
 });
-ui.action('counter.read', { description: 'The count.', result: { kind: 'int' }, effect: 'read_only' }, () => count);
+ui.action('counter.read', { description: 'The count.', result: { kind: 'int' }, effect: 'read_only' }, () => store.count);
 ui.action('counter.fail', { description: 'Throw.', effect: 'idempotent_write' }, () => { throw new Error('the counter is broken'); });
 </script></body></html>

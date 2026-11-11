@@ -30,8 +30,15 @@ const STRICT_PAGE = (() => {
 })();
 const SIZE = { width: 800, height: 500 };
 const OFFER = 'ui/observe.offer', OBSERVE = 'ui/observe.observe', INVOKE = 'ui/act.invoke';
+/** How long the Tauri plugin waits for the page's answer: a host that hears
+ * nothing by then answers that the page did not answer. */
+const UNANSWERED_MS = 5000;
+/** How soon a hidden page's host refuses a call: the suite's `CANNOT_PAINT_WITHIN`. */
+const REFUSED_WITHIN_MS = 1000;
 /** The caller's action the suite runs, beside the ones it draws from the offer. */
 const ACT = ['counter.bump', '{"by":1}'];
+/** Why the answer page ends a fixture itself. */
+const ARRIVED = 'an approval arrived for a person';
 const ACT_CLAIMS = ['an action the offer does not list is refused', 'arguments that misfit the action\'s shape are refused',
   'a read-only action runs and answers its outcome', 'counter.bump runs and names the frame after it'];
 
@@ -76,6 +83,53 @@ for (const [name, start] of ENGINES.filter(([name]) => !only || only.some((o) =>
       assert.equal(answered.failed?.reason, 'the counter is broken', JSON.stringify(answered));
       assert.ok(answered.failed.frame, JSON.stringify(answered));
     });
+      const asked = async (expression: string) => JSON.parse(await engine.evaluate(`return JSON.stringify(await globalThis.__x0kUi.${expression});`));
+      const drawn = (seen: any) => nodes(seen.layout).find((n) => n.id === 'count')?.label;
+      let live: any, handle: string;
+      test('while a fixture stands, an observation shows it and the declaration keeps the live state', async () => {
+        live = await hostAnswer(engine, OBSERVE, { parts: ['layout', 'state'] });
+        assert.equal((await asked('declared()')).fixtures, true);
+        const count = live.state.value.count + 40;
+        const presented = await asked(`present({ count: ${count} })`);
+        handle = presented.presented?.handle;
+        assert.ok(handle, JSON.stringify(presented));
+        const seen = await hostAnswer(engine, OBSERVE, { parts: ['layout', 'state'] });
+        assert.deepEqual(seen.shown, { kind: 'fixture', handle });
+        assert.equal(seen.frame, presented.presented.frame);
+        assert.equal(drawn(seen), `count ${count}`);
+        assert.equal(seen.state.value.count, count);
+        assert.notEqual(seen.state.head, live.state.head);
+        const during = (await asked('declared()')).state;
+        assert.deepEqual([during.value, during.head], [live.state.value, live.state.head]);
+      });
+      test('release names the frame of the first page state rendered after it, showing the live state', async () => {
+        const released = await asked(`release(${JSON.stringify(handle)})`);
+        const seen = await hostAnswer(engine, OBSERVE, { parts: ['layout', 'state'] });
+        assert.equal(seen.frame, released.released?.frame, JSON.stringify({ released, frame: seen.frame }));
+        assert.deepEqual(seen.shown, { kind: 'live' });
+        assert.equal(drawn(seen), `count ${live.state.value.count}`);
+        assert.deepEqual(seen.state, live.state);
+        assert.deepEqual(await asked(`release(${JSON.stringify(handle)})`), { not_standing: { handle } });
+      });
+      test('the page\'s own code hears a fixture stand and end', async () => {
+        const heard = JSON.parse(await engine.evaluate('return JSON.stringify(window.fixturesHeard);'));
+        assert.deepEqual(heard, [handle, null]);
+        assert.equal(await asked('fixture()'), null);
+      });
+      test('a fixture the page ends itself shows the live state, is heard ended, and its release names why', async () => {
+        const ended = (await asked(`present({ count: ${live.state.value.count + 7} })`)).presented?.handle;
+        assert.ok(ended);
+        assert.equal(await asked(`fixtureEnded(${JSON.stringify(ended)})`), null, 'a fixture that stands has not ended');
+        await engine.evaluate(`await window.approvalArrives(${JSON.stringify(ARRIVED)}); return 'ok';`);
+        assert.equal(await asked('fixture()'), null);
+        const seen = await hostAnswer(engine, OBSERVE, { parts: ['layout', 'state'] });
+        assert.deepEqual(seen.shown, { kind: 'live' });
+        assert.equal(drawn(seen), `count ${live.state.value.count}`);
+        assert.deepEqual(JSON.parse(await engine.evaluate('return JSON.stringify(window.fixturesHeard.slice(-2));')), [ended, null]);
+        assert.equal(await asked(`fixtureEnded(${JSON.stringify(ended)})`), ARRIVED);
+        assert.equal(await asked(`fixtureEnded(${JSON.stringify(handle)})`), null, 'a fixture released, not ended');
+        assert.deepEqual(await asked(`release(${JSON.stringify(ended)})`), { ended: { handle: ended, reason: ARRIVED } });
+      });
     test('invoke names the frame of the first page state rendered after the action', async () => {
       const answered = await hostAnswer(engine, INVOKE, { action: 'counter.bump', args: { by: 2 } });
       const seen = await hostAnswer(engine, OBSERVE, { parts: ['layout', 'state'] });
@@ -84,6 +138,14 @@ for (const [name, start] of ENGINES.filter(([name]) => !only || only.some((o) =>
       assert.equal(label, `count ${answered.done.result}`);
       assert.equal(seen.state.value.count, answered.done.result);
     });
+      test('a page that does not give both hooks takes no fixtures', async () => {
+        const reinstall = `globalThis.__x0kUi.install({ app: 'answer page', state: { shape: { kind: 'int' }, read: () => 0, release: () => {} } });`;
+        await engine.evaluate(`${reinstall} return 'ok';`);
+        const declared = JSON.parse(await engine.evaluate('return JSON.stringify(globalThis.__x0kUi.declared());'));
+        assert.equal(declared.fixtures, false);
+        const presented = JSON.parse(await engine.evaluate('return JSON.stringify(await globalThis.__x0kUi.present(0));'));
+        assert.equal(presented.refused?.code, 'no_fixtures', JSON.stringify(presented));
+      });
   });
   describe(`the answer page forbidding WebAssembly in ${name}`, () => {
     let engine: Engine;
@@ -101,6 +163,75 @@ for (const [name, start] of ENGINES.filter(([name]) => !only || only.some((o) =>
       t.diagnostic(report.trim());
       assert.ok(held, report);
       for (const claim of ACT_CLAIMS) assert.match(report, new RegExp(`holds +§9 ${claim}`), report);
+    });
+  });
+  describe(`the answer page hidden, and declining, in ${name}`, () => {
+    let engine: Engine;
+    before(async () => {
+      engine = await start(ANSWER_PAGE);
+      await sleep(300);
+    });
+    after(async () => { await engine?.close(); });
+    const asked = async (expression: string) => JSON.parse(await engine.evaluate(`return JSON.stringify(await globalThis.__x0kUi.${expression});`));
+    const count = async () => (await asked('declared()')).state.value.count;
+    /** `answer`, and how long it took, or a failure once the plugin's wait has run out. */
+    const timed = async <T>(answer: Promise<T>) => {
+      const started = performance.now();
+      const unanswered = sleep(UNANSWERED_MS).then(() => { throw new Error(`did not answer within ${UNANSWERED_MS} ms`); });
+      const answered = await Promise.race([answer, unanswered]);
+      return { answered, ms: performance.now() - started };
+    };
+
+    test('while the page is hidden, it says it cannot paint, and why', async () => {
+      await engine.hide();
+      const { answered, ms } = await timed(asked('cannotPaint()'));
+      assert.match(String(answered), /hidden/);
+      assert.ok(ms < REFUSED_WITHIN_MS, `answered in ${ms.toFixed(0)} ms`);
+    });
+    test('while the page is hidden, an observation refuses its capture as cannot_paint at once, and keeps its layout and state', async () => {
+      const { answered: seen, ms } = await timed(hostAnswer(engine, OBSERVE, { parts: ['capture', 'layout', 'state'] }));
+      assert.deepEqual(seen.refused.map((r: any) => [r.part, r.code]), [['capture', 'cannot_paint']], JSON.stringify(seen.refused));
+      assert.equal(seen.capture, undefined);
+      assert.ok(seen.layout && seen.state, JSON.stringify(seen));
+      assert.ok(ms < REFUSED_WITHIN_MS, `answered in ${ms.toFixed(0)} ms`);
+    });
+    test('while the page is hidden, its host refuses an action as cannot_paint at once, and the action never runs', async () => {
+      const was = await count();
+      const { answered, ms } = await timed(hostAnswer(engine, INVOKE, { action: 'counter.bump', args: { by: 1 } }));
+      assert.deepEqual([answered.refused?.code, answered.refused?.subject], ['cannot_paint', 'counter.bump'], JSON.stringify(answered));
+      assert.equal(await count(), was, 'the action ran');
+      assert.ok(ms < REFUSED_WITHIN_MS, `answered in ${ms.toFixed(0)} ms`);
+    });
+    test('a wait already running when the page becomes hidden ends then, saying why', async () => {
+      await engine.show();
+      await sleep(300);
+      const busy = `const busy = setInterval(() => dispatchEvent(new Event('pointermove')), 5);
+        try { return JSON.stringify({ why: (await globalThis.__x0kUiHold.settled()) ?? null }); } finally { clearInterval(busy); }`;
+      const settling = timed(engine.evaluate(busy));
+      await sleep(200);
+      await engine.hide();
+      const { answered } = await settling;
+      assert.match(JSON.parse(answered).why ?? 'settled, saying nothing', /hidden/);
+    });
+    test('shown again, the page paints, and an observation answers its capture', async () => {
+      await engine.show();
+      await sleep(300);
+      assert.equal(await asked('cannotPaint()'), null);
+      const seen = await hostAnswer(engine, OBSERVE, { parts: ['capture', 'layout'] });
+      assert.ok(seen.capture && seen.refused.length === 0, JSON.stringify(seen.refused));
+    });
+    test('a present the page declines answers declined with its reason, and no fixture stands', async () => {
+      await engine.evaluate('window.approvalWaiting = true; return "ok";');
+      const presented = await asked('present({ count: 7 })');
+      assert.deepEqual(presented, { refused: { code: 'declined', subject: 'ui/history', why: 'an approval waits for a person' } });
+      assert.equal(await asked('fixture()'), null);
+      assert.equal(await asked(`declines({ kind: 'invoke', action: 'counter.bump' })`), 'an approval waits for a person');
+      await engine.evaluate('window.approvalWaiting = false; return "ok";');
+      assert.equal(await asked(`declines({ kind: 'invoke', action: 'counter.bump' })`), null);
+    });
+    test('a present hook that throws anything but a decline throws to its host', async () => {
+      await assert.rejects(asked('present({ count: -1 })'), /the page shows no negative count/);
+      assert.equal(await asked('fixture()'), null);
     });
   });
 }

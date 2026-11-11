@@ -3,22 +3,26 @@
 //! made of what the page declares, reads and runs over the plugin's IPC.
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tauri::{Runtime, Webview};
-use x0k_ui_endpoint::server::{listen, Endpoint, UiApp, UNNAMED};
+use tracing::Instrument;
+use x0k_datum::Datum;
+use x0k_ui_endpoint::server::{bind_path, requester, serve_connection_from, Declinable, Endpoint, UiApp, UNNAMED};
 use x0k_ui_protocol::act::{Grant, Outcome};
-use x0k_ui_protocol::history::Shown;
+use x0k_ui_protocol::fixture::{PresentAnswer, ReleaseAnswer};
+use x0k_ui_protocol::history::{Destination, History, HistoryCall, HistoryOffer, NavigateAnswer, Shown};
 use x0k_ui_protocol::input::{HeldFrame, InputOffer, Perform, Resolved, Step, Target};
-use x0k_ui_protocol::observe::{LayoutNode, Observation, ObserveCall, Part, PartRefused};
-use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_INPUT};
+use x0k_ui_protocol::observe::{LayoutNode, Observation, ObserveCall, Part, PartRefused, StatePart};
+use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY, UI_INPUT};
 use x0k_ui_protocol::page::{page_offer, state_part, Declared, DeclaredState};
-use x0k_ui_protocol::shapes::interfaces;
+use x0k_ui_protocol::shapes::{interface, interfaces};
+use x0k_ui_protocol::{Refused, RefusalCode};
 
 use crate::held::{held_capture, HOLD_TRIES};
-use crate::page::{PageError, PageHold, PageHost};
+use crate::page::{PageError, PageHold, PageHost, PAGE_GLOBAL};
 
 /// How many observed frames input may still name, as the shell keeps.
 pub const HELD_FRAMES: usize = 8;
@@ -41,6 +45,18 @@ pub struct PageApp<R: Runtime> {
     kept: Mutex<VecDeque<Kept>>,
     /// The platform delivers one sequence at a time.
     input_turn: tokio::sync::Mutex<()>,
+    /// The spelling of the page's state shape, as it last declared it.
+    shape: Mutex<Option<Datum>>,
+}
+
+/// What the page declares: the protocol's `Declared`, and beside it whether
+/// the page takes state fixtures, which a page alone does not offer.
+#[derive(serde::Deserialize)]
+struct PageDeclared {
+    #[serde(flatten)]
+    declared: Declared,
+    #[serde(default)]
+    fixtures: bool,
 }
 
 /// What the library answers for one held observation: the observation of the
@@ -66,7 +82,21 @@ fn observed_script(held_json: &str, call_json: &str) -> String {
 
 impl<R: Runtime> PageApp<R> {
     pub fn new(webview: Webview<R>) -> Self {
-        Self { page: PageHost::new(webview), kept: Mutex::default(), input_turn: tokio::sync::Mutex::new(()) }
+        Self { page: PageHost::new(webview), kept: Mutex::default(), input_turn: tokio::sync::Mutex::new(()), shape: Mutex::default() }
+    }
+
+    /// What the page declares now. Its state's shape is kept, for the
+    /// endpoint's fixture checks to read.
+    async fn declared(&self) -> Result<PageDeclared, PageError> {
+        let declared: PageDeclared = self.ask("declared()").await?;
+        let shape = declared.declared.state.as_ref().map(|state| Datum::from_json(&state.shape));
+        *self.shape.lock().unwrap_or_else(PoisonError::into_inner) = shape;
+        Ok(declared)
+    }
+
+    /// The page's epoch now, which names the frame it shows.
+    async fn epoch(&self) -> Option<String> {
+        self.page.evaluate(&format!("return String(globalThis.{PAGE_GLOBAL}.epoch());")).await.ok()
     }
 
     /// What the page's `expression`, one of the library's calls, answers.
@@ -92,7 +122,7 @@ impl<R: Runtime> PageApp<R> {
         if let Some(why) = cannot {
             observation.capture = None;
             observation.refused.retain(|refused| refused.part != Part::Capture);
-            observation.refused.push(PartRefused { part: Part::Capture, why });
+            observation.refused.push(PartRefused { part: Part::Capture, code: None, why });
         }
         if let Some(snapshot) = &held.capture {
             if let Some(capture) = observation.capture.as_mut() {
@@ -121,11 +151,14 @@ impl<R: Runtime> PageApp<R> {
 
 impl<R: Runtime> UiApp for PageApp<R> {
     async fn offer(&self) -> Offer {
-        let input = interfaces().into_iter().filter(|interface| interface.name == UI_INPUT);
-        match self.ask::<Declared>("declared()").await.map(page_offer) {
-            Ok(mut offer) => {
-                offer.interfaces.extend(input);
+        match self.declared().await {
+            Ok(PageDeclared { declared, fixtures }) => {
+                let input = interfaces().into_iter().filter(|interface| interface.name == UI_INPUT);
+                let history = interface(UI_HISTORY).filter(|_| fixtures);
+                let mut offer = page_offer(declared);
+                offer.interfaces.extend(input.chain(history));
                 offer.input = Some(InputOffer { presents: true, takeover: false });
+                offer.history = fixtures.then_some(HistoryOffer { oldest: None, newest: None, fixtures: true });
                 offer
             }
             Err(error) => {
@@ -140,7 +173,7 @@ impl<R: Runtime> UiApp for PageApp<R> {
             Ok(observation) => observation,
             Err(error) => {
                 let why = error.to_string();
-                let refused = call.parts.iter().map(|part| PartRefused { part: *part, why: why.clone() }).collect();
+                let refused = call.parts.iter().map(|part| PartRefused { part: *part, code: None, why: why.clone() }).collect();
                 Observation { frame: None, capture: None, layout: None, state: None, refused, shown: Some(Shown::Live) }
             }
         }
@@ -151,6 +184,78 @@ impl<R: Runtime> UiApp for PageApp<R> {
         match self.ask::<Outcome>(&run).await {
             Ok(outcome) => outcome,
             Err(error) => Outcome::Failed { reason: error.to_string(), frame: None },
+        }
+    }
+
+    async fn shown(&self) -> Shown {
+        match self.ask::<Option<String>>("fixture()").await {
+            Ok(Some(handle)) => Shown::Fixture { handle },
+            Ok(None) => Shown::Live,
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.endpoint.shown_unanswered");
+                Shown::Live
+            }
+        }
+    }
+
+    async fn history(&self, _call: HistoryCall) -> History {
+        History { oldest: None, newest: None, shown: self.shown().await, positions: Vec::new() }
+    }
+
+    async fn navigate(&self, to: Destination) -> NavigateAnswer {
+        if let Destination::Position { position } = to {
+            let why = format!("the page holds no position {position}");
+            return NavigateAnswer::Refused(Refused { code: RefusalCode::UnknownPosition, subject: Some(position.to_string()), why });
+        }
+        let frame = match self.shown().await {
+            Shown::Fixture { handle } => match self.release(handle).await {
+                ReleaseAnswer::Released { frame } => frame,
+                ReleaseAnswer::NotStanding { .. } | ReleaseAnswer::Ended { .. } => self.epoch().await,
+                ReleaseAnswer::Refused(refused) => return NavigateAnswer::Refused(refused),
+            },
+            _ => self.epoch().await,
+        };
+        NavigateAnswer::Shown { shown: Shown::Live, frame }
+    }
+
+    fn state_shape(&self) -> Option<Datum> {
+        self.shape.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    async fn live_state(&self) -> Option<StatePart> {
+        match self.declared().await {
+            Ok(declared) => declared.declared.state.map(state_part),
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.endpoint.state_unanswered");
+                None
+            }
+        }
+    }
+
+    async fn present(&self, state: Value) -> PresentAnswer {
+        match self.ask::<PresentAnswer>(&format!("present({state})")).await {
+            Ok(answer) => answer,
+            Err(error) => {
+                let code = if matches!(error, PageError::Threw(_)) { RefusalCode::MisfitState } else { RefusalCode::NoFixtures };
+                PresentAnswer::Refused(Refused { code, subject: Some(UI_HISTORY.to_string()), why: error.to_string() })
+            }
+        }
+    }
+
+    async fn release(&self, handle: String) -> ReleaseAnswer {
+        match self.ask::<ReleaseAnswer>(&format!("release({})", json!(handle))).await {
+            Ok(answer) => answer,
+            Err(error) => ReleaseAnswer::Refused(Refused { code: RefusalCode::NoFixtures, subject: Some(handle), why: error.to_string() }),
+        }
+    }
+
+    async fn fixture_ended(&self, handle: &str) -> Option<String> {
+        match self.ask::<Option<String>>(&format!("fixtureEnded({})", json!(handle))).await {
+            Ok(why) => why,
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.endpoint.ended_unanswered");
+                None
+            }
         }
     }
 
@@ -172,9 +277,31 @@ impl<R: Runtime> UiApp for PageApp<R> {
         };
         let _turn = self.input_turn.lock().await;
         match self.page.perform(requester, &perform, &resolved, scale).await {
-            Ok(epoch) => Some(epoch.to_string()),
+            Ok(epoch) => epoch.map(|epoch| epoch.to_string()),
             Err(error) => {
                 tracing::warn!(%error, "ui_tauri.endpoint.input_undelivered");
+                None
+            }
+        }
+    }
+
+    async fn cannot_paint(&self) -> Option<String> {
+        self.page.cannot_paint().await
+    }
+
+    fn delivers(&self) -> &[&str] {
+        crate::input::DELIVERED
+    }
+
+    async fn declines(&self, call: Declinable<'_>) -> Option<String> {
+        let call = match call {
+            Declinable::Invoke(action) => json!({ "kind": "invoke", "action": action.name }),
+            Declinable::Perform(_) => json!({ "kind": "perform" }),
+        };
+        match self.ask::<Option<String>>(&format!("declines({call})")).await {
+            Ok(why) => why,
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.endpoint.declines_unanswered");
                 None
             }
         }
@@ -214,18 +341,70 @@ fn scale_for(perform: &Perform, kept: &[Kept]) -> Result<f64, Undivided> {
 }
 
 /// Serve `webview`'s page as the app's UI-control endpoint on the unix socket
-/// at `path`, until the app ends.
-pub async fn serve<R: Runtime>(path: PathBuf, webview: Webview<R>) {
+/// at `path`, until the app ends. With `driven`, a covered window keeps
+/// painting while a driver is connected.
+pub async fn serve<R: Runtime>(path: PathBuf, webview: Webview<R>, driven: bool) {
     if let Some(dir) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(dir) {
             return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound");
         }
     }
     let every = Grant { classes: vec![SideEffect::ReadOnly, SideEffect::IdempotentWrite, SideEffect::NonIdempotent] };
-    let endpoint = Arc::new(Endpoint::new(PageApp::new(webview), every));
+    let endpoint = Arc::new(Endpoint::new(PageApp::new(webview.clone()), every));
+    let listener = match bind_path(&path).await {
+        Ok(listener) => listener,
+        Err(error) => return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound"),
+    };
     tracing::info!(path = %path.display(), "ui_tauri.endpoint.listening");
-    if let Err(error) = listen(&path, endpoint).await {
-        tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound");
+    let drivers = Arc::new(Drivers { webview, driven, connected: Mutex::new(0) });
+    loop {
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(error) => return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound"),
+        };
+        let (endpoint, requester, connected) = (Arc::clone(&endpoint), requester(&stream), Drivers::arrive(&drivers));
+        let span = tracing::info_span!("ui_endpoint.connection", requester = %requester);
+        tauri::async_runtime::spawn(
+            async move {
+                let _connected = connected;
+                let _ = serve_connection_from(stream, endpoint, requester).await;
+            }
+            .instrument(span),
+        );
+    }
+}
+
+/// The drivers connected to the endpoint, and the webview they drive.
+struct Drivers<R: Runtime> {
+    webview: Webview<R>,
+    /// Whether the window keeps painting while one is connected.
+    driven: bool,
+    connected: Mutex<usize>,
+}
+
+/// One driver's connection, until it ends.
+struct Connected<R: Runtime>(Arc<Drivers<R>>);
+
+impl<R: Runtime> Drivers<R> {
+    /// A driver connects: the first turns the window's painting on.
+    fn arrive(drivers: &Arc<Self>) -> Connected<R> {
+        let mut connected = drivers.connected.lock().unwrap_or_else(PoisonError::into_inner);
+        *connected += 1;
+        if *connected == 1 && drivers.driven {
+            crate::painting::keep_painting(&drivers.webview, true);
+        }
+        Connected(Arc::clone(drivers))
+    }
+}
+
+impl<R: Runtime> Drop for Connected<R> {
+    /// A driver leaves: the last gives WebKit its own policy back.
+    fn drop(&mut self) {
+        let mut connected = self.0.connected.lock().unwrap_or_else(PoisonError::into_inner);
+        *connected -= 1;
+        if *connected == 0 && self.0.driven {
+            crate::painting::keep_painting(&self.0.webview, false);
+        }
     }
 }
 

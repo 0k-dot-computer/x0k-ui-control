@@ -3,7 +3,7 @@
  * platform's capture and the page's verify, each a round trip to the page or
  * to the platform. */
 export interface HoldingHost<R, C> {
-  hold(): Promise<{ epoch: number; read: R; holdMs: number }>;
+  hold(): Promise<{ epoch: number; read: R; holdMs: number; unpainted?: string }>;
   capture(): Promise<C>;
   verify(): Promise<number>;
 }
@@ -14,7 +14,7 @@ export interface HeldCapture<R, C> {
   frame: string;
   read: R;
   capture?: C;
-  refused?: { part: 'capture'; why: string };
+  refused?: { part: 'capture'; code?: 'cannot_paint'; why: string };
   /** The hold's cost on each try, in ms. */
   holdMs: number[];
 }
@@ -32,6 +32,10 @@ export async function heldCapture<R, C>(host: HoldingHost<R, C>, tries = HOLD_TR
   for (let i = 0; i < tries; i++) {
     const held = await host.hold();
     holdMs.push(held.holdMs);
+    if (held.unpainted !== undefined) {
+      await host.verify();
+      return { frame: String(held.epoch), read: held.read, holdMs, refused: { part: 'capture', code: 'cannot_paint', why: held.unpainted } };
+    }
     let capture: C | undefined;
     let failure: unknown;
     try { capture = await host.capture(); } catch (e) { failure = e; }

@@ -143,7 +143,8 @@ fn a_value_fits_the_shape_its_operation_declares() {
     let call = serde_json::to_value(ReleaseCall { handle: "x1".to_string() }).expect("JSON");
     assert!(fits(&release.argument, &call, Use::Argument));
     let gone = ReleaseAnswer::NotStanding { handle: "x1".to_string() };
-    for answer in [ReleaseAnswer::Released { frame: None }, gone] {
+    let ended = ReleaseAnswer::Ended { handle: "x1".to_string(), reason: "an approval arrived".to_string() };
+    for answer in [ReleaseAnswer::Released { frame: None }, gone, ended] {
         let answer = serde_json::to_value(answer).expect("JSON");
         assert!(fits(&release.answer, &answer, Use::Answer), "{answer}");
     }

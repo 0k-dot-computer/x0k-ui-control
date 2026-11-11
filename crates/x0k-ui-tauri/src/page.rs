@@ -30,6 +30,8 @@ const FADE_STEP: Duration = Duration::from_millis(50);
 
 /// What a page's host draws of drivers' input, shared with the task that fades it.
 type Shared = Arc<Mutex<InputPresentation>>;
+/// The name each requester gives itself (`Perform::requester_name`), by requester.
+type Names = Arc<Mutex<HashMap<String, String>>>;
 
 /// Why a request to the page, or its capture, got no usable answer.
 #[derive(Debug, thiserror::Error)]
@@ -96,12 +98,42 @@ impl Pending {
 /// The in-page library as a classic script: its `pageScript()`, carried.
 pub const PAGE_SCRIPT: &str = include_str!("../page-script.js");
 
+/// When the plugin keeps a covered window painting, by the macOS host's two
+/// switches ("Keeping a covered window painting", below). Elsewhere there is
+/// no switch, and each is the same.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CoveredPainting {
+    /// While a driver is connected to the endpoint: on when the first one
+    /// connects, and WebKit's own policy back when the last one leaves.
+    #[default]
+    WhileDriven,
+    /// From when the webview is made, for its life, for an app that is
+    /// remote-controlled from its start.
+    FromCreation,
+    /// Never: WebKit's own policy throughout.
+    Off,
+}
+
 /// The plugin: the in-page library injected before the page's own scripts in
 /// the main frame of every page. Once the webview labelled `webview` has loaded
 /// its first page, the plugin serves it as the app's UI-control endpoint on the
-/// unix socket [`endpoint_socket_path`] names for `app`.
+/// unix socket [`endpoint_socket_path`] names for `app`. A covered window
+/// keeps painting while a driver is connected.
 pub fn ui_plugin<R: Runtime>(app: &str, webview: impl Into<String>) -> TauriPlugin<R> {
-    let (endpoint, label, served) = (endpoint_socket_path(app), webview.into(), AtomicBool::new(false));
+    ui_plugin_with(app, webview, CoveredPainting::default())
+}
+
+/// The plugin, keeping a covered window painting as `covered` says.
+pub fn ui_plugin_with<R: Runtime>(app: &str, webview: impl Into<String>, covered: CoveredPainting) -> TauriPlugin<R> {
+    ui_plugin_at(endpoint_socket_path(app), webview, covered)
+}
+
+/// The plugin, serving its endpoint on the unix socket at `endpoint` and
+/// nowhere else, keeping a covered window painting as `covered` says. It reads
+/// no environment and no profile to place the socket.
+pub fn ui_plugin_at<R: Runtime>(endpoint: impl Into<PathBuf>, webview: impl Into<String>, covered: CoveredPainting) -> TauriPlugin<R> {
+    let (endpoint, label, served) = (endpoint.into(), webview.into(), AtomicBool::new(false));
+    let made = label.clone();
     Builder::new(PLUGIN)
         .js_init_script(PAGE_SCRIPT.to_string())
         .invoke_handler(tauri::generate_handler![page_answer])
@@ -109,14 +141,20 @@ pub fn ui_plugin<R: Runtime>(app: &str, webview: impl Into<String>) -> TauriPlug
             app.manage(Pending::default());
             Ok(())
         })
+        .on_webview_ready(move |webview| {
+            if covered == CoveredPainting::FromCreation && webview.label() == made {
+                crate::painting::keep_painting(&webview, true);
+            }
+        })
         .on_page_load(move |webview, payload| {
             let first = payload.event() == PageLoadEvent::Finished && webview.label() == label && !served.swap(true, Ordering::SeqCst);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             if first {
-                tauri::async_runtime::spawn(crate::endpoint::serve(endpoint.clone(), webview.clone()));
+                let driven = covered == CoveredPainting::WhileDriven;
+                tauri::async_runtime::spawn(crate::endpoint::serve(endpoint.clone(), webview.clone(), driven));
             }
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            let _ = (first, &endpoint);
+            let _ = (first, &endpoint, covered);
         })
         .build()
 }
@@ -165,6 +203,8 @@ pub struct PageHost<R: Runtime> {
     webview: Webview<R>,
     /// What the host draws of drivers' input over this page.
     presentation: Shared,
+    /// The name each requester's latest sequence gives it, which its label shows.
+    names: Names,
     /// Whether a task is fading the drawing.
     fading: Arc<AtomicBool>,
     /// The view's width in its own units, as the last capture measured it,
@@ -174,7 +214,7 @@ pub struct PageHost<R: Runtime> {
 
 impl<R: Runtime> PageHost<R> {
     pub fn new(webview: Webview<R>) -> Self {
-        Self { webview, presentation: Shared::default(), fading: Arc::default(), units: Arc::default() }
+        Self { webview, presentation: Shared::default(), names: Names::default(), fading: Arc::default(), units: Arc::default() }
     }
 
     /// Whether a capture of the page held now carries the drawing of drivers'
@@ -186,7 +226,16 @@ impl<R: Runtime> PageHost<R> {
     /// Draw one event of `requester`'s over the page.
     fn draw(&self, requester: &str, event: &Event) {
         self.presentation.lock().unwrap_or_else(PoisonError::into_inner).show(requester, event, Instant::now());
-        paint_drawn(&self.webview, &self.presentation, &self.units);
+        paint_drawn(&self.webview, &self.presentation, &self.names, &self.units);
+    }
+
+    /// `requester`'s sequence names it `given`, or names it nothing.
+    fn named(&self, requester: &str, given: Option<&str>) {
+        let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+        match given {
+            Some(given) => names.insert(requester.to_string(), given.to_string()),
+            None => names.remove(requester),
+        };
     }
 
     /// Prune and paint the drawing until it has faded, in one task at a time.
@@ -194,12 +243,13 @@ impl<R: Runtime> PageHost<R> {
         if self.fading.swap(true, Ordering::SeqCst) {
             return;
         }
-        let (webview, presentation, fading, units) = (self.webview.clone(), self.presentation.clone(), self.fading.clone(), self.units.clone());
+        let (webview, presentation, names, fading, units) =
+            (self.webview.clone(), self.presentation.clone(), self.names.clone(), self.fading.clone(), self.units.clone());
         tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(FADE_STEP).await;
                 let still = presentation.lock().unwrap_or_else(PoisonError::into_inner).prune(Instant::now());
-                paint_drawn(&webview, &presentation, &units);
+                paint_drawn(&webview, &presentation, &names, &units);
                 if !still {
                     fading.store(false, Ordering::SeqCst);
                     return;
@@ -254,6 +304,26 @@ impl<R: Runtime> PageHost<R> {
         }
     }
 
+    /// Why the page cannot paint now, when it cannot: its window is minimised
+    /// or hidden, as the window itself says, or the page says it cannot
+    /// (the library's `unpainted()`), as for a window WebKit counts as covered.
+    pub async fn cannot_paint(&self) -> Option<String> {
+        let window = self.webview.window();
+        if window.is_minimized().unwrap_or(false) {
+            return Some("the window is minimised".to_string());
+        }
+        if !window.is_visible().unwrap_or(true) {
+            return Some("the window is hidden".to_string());
+        }
+        match self.evaluate(&format!("return JSON.stringify(globalThis.{PAGE_GLOBAL}.unpainted() ?? null);")).await {
+            Ok(answer) => serde_json::from_str(&answer).unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.page.paint_unanswered");
+                None
+            }
+        }
+    }
+
     /// The platform's capture of the page as it shows now.
     pub async fn snapshot(&self) -> Result<Snapshot, PageError> {
         let snapshot = crate::snapshot::take_snapshot(&self.webview).await?;
@@ -263,15 +333,17 @@ impl<R: Runtime> PageHost<R> {
 
     /// Deliver `perform` into the page through the platform's input path, drawn
     /// for `requester` over the window as it lands, and answer the page's epoch
-    /// once its input has settled. `resolved` is what `check_perform` answered for
+    /// once its input has settled, or `None` when the page could not paint the
+    /// frame that shows it. `resolved` is what `check_perform` answered for
     /// it, in the frame's capture pixels, and `scale` is that frame's capture's
     /// pixels per widget unit (`Snapshot::scale`).
-    pub async fn perform(&self, requester: &str, perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<u64, PageError> {
+    pub async fn perform(&self, requester: &str, perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<Option<u64>, PageError> {
         #[cfg(target_os = "linux")]
         let ticks = crate::input::gdk_ticks(perform, resolved, scale)?;
         #[cfg(target_os = "macos")]
         let ticks = crate::input::appkit_ticks(perform, resolved, scale)?;
         let shown = x0k_ui_protocol::input::ticks(perform, resolved, scale)?;
+        self.named(requester, perform.requester_name.as_deref());
         let watchable = perform.presented() && perform.pace == Pace::Watchable;
         let mut last = HashMap::new();
         for (tick, events) in ticks.into_iter().zip(&shown) {
@@ -294,8 +366,15 @@ impl<R: Runtime> PageHost<R> {
         if perform.presented() {
             self.keep_fading();
         }
-        let epoch = self.evaluate(&format!("{SETTLE} return String(globalThis.{PAGE_GLOBAL}.epoch());")).await?;
-        epoch.parse().map_err(|_| PageError::Malformed(epoch))
+        let body = format!("const hold = globalThis.{PAGE_GLOBAL}; const unpainted = await hold.settled(); return JSON.stringify({{ epoch: hold.epoch(), unpainted: unpainted ?? null }});");
+        let settled: Settled = serde_json::from_str(&self.evaluate(&body).await?).map_err(|e| PageError::Malformed(e.to_string()))?;
+        match settled.unpainted {
+            Some(why) => {
+                tracing::info!(%why, epoch = settled.epoch, "ui_tauri.input.unpainted");
+                Ok(None)
+            }
+            None => Ok(Some(settled.epoch)),
+        }
     }
 
     /// One observation: `read`, a script expression, read in the hold, and
@@ -317,22 +396,13 @@ fn request_script(nonce: &str, body: &str) -> String {
     )
 }
 
-/// A request body that waits until the page has handled the input still
-/// queued for it: two rendering updates with no input event, or a second.
-const SETTLE: &str = "await new Promise((settled) => {
-  const kinds = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
-  const heard = () => { quiet = 0; };
-  const until = performance.now() + 1000;
-  let quiet = 0;
-  for (const kind of kinds) addEventListener(kind, heard, { capture: true, passive: true });
-  const frame = () => {
-    quiet += 1;
-    if (quiet <= 2 && performance.now() < until) return void requestAnimationFrame(frame);
-    for (const kind of kinds) removeEventListener(kind, heard, { capture: true });
-    settled();
-  };
-  requestAnimationFrame(frame);
-});";
+/// What the library's settle answers: the epoch then, and why the page could
+/// not paint, when it could not.
+#[derive(serde::Deserialize)]
+struct Settled {
+    epoch: u64,
+    unpainted: Option<String>,
+}
 
 /// The plugin's host for one observation of a page: the library's hold and
 /// verify, and the platform's snapshot between them.
@@ -377,15 +447,17 @@ impl<R: Runtime> HoldingHost for PageHold<'_, R> {
 }
 
 /// Paint `presentation` on the in-page library's drawing layer, in the view's
-/// units, the view being `units` wide (an `f64`'s bits).
-fn paint_drawn<R: Runtime>(webview: &Webview<R>, presentation: &Shared, units: &AtomicU64) {
+/// units, the view being `units` wide (an `f64`'s bits), each pointer with the
+/// name its requester gives itself, when it gives one.
+fn paint_drawn<R: Runtime>(webview: &Webview<R>, presentation: &Shared, names: &Names, units: &AtomicU64) {
     let now = Instant::now();
     let drawing = {
         let mut shown = presentation.lock().unwrap_or_else(PoisonError::into_inner);
+        let names = names.lock().unwrap_or_else(PoisonError::into_inner);
         let (pointers, clicks, keys) = (shown.pointers().cloned().collect::<Vec<_>>(), shown.clicks().to_vec(), shown.keys().cloned());
         serde_json::json!({
             "units": f64::from_bits(units.load(Ordering::SeqCst)),
-            "pointers": pointers.iter().map(|p| serde_json::json!({ "requester": p.requester, "at": p.at, "pressed": p.pressed, "hue": shown.hue(&p.requester) })).collect::<Vec<_>>(),
+            "pointers": pointers.iter().map(|p| serde_json::json!({ "requester": p.requester, "name": names.get(&p.requester), "at": p.at, "pressed": p.pressed, "hue": shown.hue(&p.requester) })).collect::<Vec<_>>(),
             "clicks": clicks.iter().map(|c| serde_json::json!({ "at": c.at, "gone": faded(c.since, now, MARK_FOR), "hue": shown.hue(&c.requester) })).collect::<Vec<_>>(),
             "keys": keys.map(|k| serde_json::json!({ "requester": k.requester, "text": k.text, "gone": faded(k.since, now, MARK_FOR), "hue": shown.hue(&k.requester) })),
         })

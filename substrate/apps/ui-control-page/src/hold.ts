@@ -7,6 +7,9 @@ export interface Held<T> {
   epoch: number;
   read: T;
   holdMs: number;
+  /** Why the page could not paint while it was held, when it could not: the
+   * hold ended its wait, so no capture shows the read. */
+  unpainted?: string;
 }
 
 /** The page's hold: its epoch, and the hold a host asks for around a capture. */
@@ -19,6 +22,16 @@ export interface Hold {
    * one task. With `frameOnly`, the host's drawing of input is hidden from the
    * hold until the release, so the capture is the page's frame alone. */
   hold<T>(read: () => T, options?: HoldOptions): Promise<Held<T>>;
+  /** Why the page cannot paint now, when it cannot: it is hidden, or a wait
+   * on a rendering update ran out and no update has come since. */
+  unpainted(): string | undefined;
+  /** Answer once one rendering update has run, after the callbacks the page
+   * asked for first; or answer why the page cannot paint. */
+  rendered(): Promise<string | undefined>;
+  /** Answer once the page has handled the input queued for it: three
+   * rendering updates in a row with no input event between, or `SETTLE_MS`;
+   * or answer why the page cannot paint. */
+  settled(): Promise<string | undefined>;
   /** The epoch now, and release the page. */
   verify(): number;
   /** Whether the page is held. */
@@ -39,6 +52,11 @@ export interface HoldOptions {
 export const SETTLE_UPDATES = 2;
 /** How long a hold may stand before the page lets itself go. */
 export const HOLD_LAPSE_MS = 1000;
+/** How long any wait on a rendering update may last before the page answers
+ * that it cannot paint. */
+export const FRAME_WAIT_MS = 1000;
+/** How long input may keep arriving before the page counts as settled. */
+export const SETTLE_MS = 1000;
 
 const INSTALLED = Symbol.for('x0k.ui-control.hold');
 
@@ -136,10 +154,58 @@ export function installHold(win: Window = window): Hold {
     const step = (left: number) => (left === 0 ? done() : nativeRaf(() => step(left - 1)));
     step(n);
   });
+  const HIDDEN = 'the page is hidden: document.visibilityState is hidden, as for a minimised, unmapped or covered window';
+  const hiddenNow = () => (doc.visibilityState === 'hidden' ? HIDDEN : undefined);
+  // When a wait last ran out with no rendering update, until the next one comes.
+  let stalledAt: number | undefined;
+  const stalled = () => {
+    stalledAt ??= win.performance.now() - FRAME_WAIT_MS;
+    nativeRaf(() => { stalledAt = undefined; });
+  };
+  const unpainted = (): string | undefined => hiddenNow()
+    ?? (stalledAt === undefined ? undefined : `no rendering update has come for ${Math.round(win.performance.now() - stalledAt)} ms`);
+  /** `wait`, or why the page cannot paint: it is or becomes hidden, or
+   * `FRAME_WAIT_MS` pass with `wait` unanswered. */
+  const whilePainting = (wait: Promise<unknown>): Promise<string | undefined> => new Promise((done) => {
+    const now = unpainted();
+    if (now) return done(now);
+    let finished = false;
+    const finish = (why?: string) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      doc.removeEventListener('visibilitychange', onVisibility);
+      done(why);
+    };
+    const onVisibility = () => { const why = hiddenNow(); if (why) finish(why); };
+    doc.addEventListener('visibilitychange', onVisibility);
+    const timer = setTimeout(() => { stalled(); finish(unpainted()); }, FRAME_WAIT_MS);
+    wait.then(() => finish(), () => finish());
+  });
+  const rendered = () => whilePainting(new Promise<void>((done) => win.requestAnimationFrame(() => done())));
+  const SETTLE_EVENTS = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
+  const settled = async (): Promise<string | undefined> => {
+    let quiet = 0;
+    const heard = () => { quiet = 0; };
+    for (const kind of SETTLE_EVENTS) win.addEventListener(kind, heard, { capture: true, passive: true });
+    try {
+      const until = win.performance.now() + SETTLE_MS;
+      do {
+        const why = await rendered();
+        if (why) return why;
+        quiet += 1;
+      } while (quiet <= 2 && win.performance.now() < until);
+      return undefined;
+    } finally {
+      for (const kind of SETTLE_EVENTS) win.removeEventListener(kind, heard, { capture: true });
+    }
+  };
   // The animations the hold paused, each with the start time it ran from.
   let paused: { animation: Animation; startTime: CSSNumberish | null }[] = [];
   // Whether this hold hid the host's drawing, for the frame alone.
   let hidDrawn = false;
+  // Why this hold's pauses did not take hold, when the page could not paint.
+  let unheld: string | undefined;
   let lapse: ReturnType<typeof setTimeout> | undefined;
   const release = () => {
     if (!held) return;
@@ -169,15 +235,17 @@ export function installHold(win: Window = window): Hold {
       paused = doc.getAnimations().filter((a) => a.playState === 'running').map((animation) => ({ animation, startTime: animation.startTime }));
       for (const { animation } of paused) animation.pause();
       // A pause takes hold, on the compositor too, when its animation is ready.
-      await Promise.all(paused.map(({ animation }) => animation.ready));
+      if (paused.length > 0) unheld = await whilePainting(Promise.all(paused.map(({ animation }) => animation.ready)));
     }
     if (options.frameOnly && !hidDrawn) {
       layer.hide(true);
       hidDrawn = true;
     }
-    await updates(SETTLE_UPDATES);
+    const why = unheld ?? (await whilePainting(updates(SETTLE_UPDATES)));
+    unheld = undefined;
     const epoch = epochNow();
-    return { epoch, read: read(), holdMs: win.performance.now() - start };
+    const answered: Held<T> = { epoch, read: read(), holdMs: win.performance.now() - start };
+    return why ? { ...answered, unpainted: why } : answered;
   };
   const verify = (): number => {
     const epoch = epochNow();
@@ -185,7 +253,7 @@ export function installHold(win: Window = window): Hold {
     return epoch;
   };
 
-  const api: Hold = { epoch: epochNow, changed: bump, hold, verify, held: () => held, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
+  const api: Hold = { epoch: epochNow, changed: bump, hold, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
   (win as any)[INSTALLED] = api;
   return api;
 }

@@ -50,6 +50,10 @@ These are §1 and §2 of the webview design, as this code keeps them:
 - The epoch read after the capture equals the epoch read before it, or the
   host holds again, up to three times, and then refuses the capture as
   `page_unsettled`, naming the epochs it saw.
+- No wait on a rendering update outlasts `FRAME_WAIT_MS`, and a page that is
+  or becomes hidden ends every wait at once with its reason. A hold that could
+  not paint is not captured: its host refuses the capture as `cannot_paint`
+  and answers the read.
 - A release resumes each paused animation at the time it would have reached
   unheld, and runs each deferred callback in the next rendering update.
 
@@ -70,6 +74,9 @@ export interface Held<T> {
   epoch: number;
   read: T;
   holdMs: number;
+  /** Why the page could not paint while it was held, when it could not: the
+   * hold ended its wait, so no capture shows the read. */
+  unpainted?: string;
 }
 
 /** The page's hold: its epoch, and the hold a host asks for around a capture. */
@@ -82,6 +89,16 @@ export interface Hold {
    * one task. With `frameOnly`, the host's drawing of input is hidden from the
    * hold until the release, so the capture is the page's frame alone. */
   hold<T>(read: () => T, options?: HoldOptions): Promise<Held<T>>;
+  /** Why the page cannot paint now, when it cannot: it is hidden, or a wait
+   * on a rendering update ran out and no update has come since. */
+  unpainted(): string | undefined;
+  /** Answer once one rendering update has run, after the callbacks the page
+   * asked for first; or answer why the page cannot paint. */
+  rendered(): Promise<string | undefined>;
+  /** Answer once the page has handled the input queued for it: three
+   * rendering updates in a row with no input event between, or `SETTLE_MS`;
+   * or answer why the page cannot paint. */
+  settled(): Promise<string | undefined>;
   /** The epoch now, and release the page. */
   verify(): number;
   /** Whether the page is held. */
@@ -102,6 +119,11 @@ export interface HoldOptions {
 export const SETTLE_UPDATES = 2;
 /** How long a hold may stand before the page lets itself go. */
 export const HOLD_LAPSE_MS = 1000;
+/** How long any wait on a rendering update may last before the page answers
+ * that it cannot paint. */
+export const FRAME_WAIT_MS = 1000;
+/** How long input may keep arriving before the page counts as settled. */
+export const SETTLE_MS = 1000;
 ```
 
 The reader is the caller's. The probe test reads the counter and two boxes.
@@ -116,7 +138,7 @@ run, and replaces `requestAnimationFrame` and `cancelAnimationFrame` on the
 window. A second install in the same window answers the first, so a host that
 injects the library and a page that imports it share one hold.
 
-<a name="chunk-hold-file"></a><sub>`src/hold.ts` · `#hold-file` · assembles [hold-contract](#chunk-hold-contract) · [epoch-event-names](#chunk-epoch-event-names) · [watch-mutations](#chunk-watch-mutations) · [watch-events](#chunk-watch-events) · [watch-animations](#chunk-watch-animations) · [defer-frame-callbacks](#chunk-defer-frame-callbacks) · [hold-and-release](#chunk-hold-and-release)</sub>
+<a name="chunk-hold-file"></a><sub>`src/hold.ts` · `#hold-file` · assembles [hold-contract](#chunk-hold-contract) · [epoch-event-names](#chunk-epoch-event-names) · [watch-mutations](#chunk-watch-mutations) · [watch-events](#chunk-watch-events) · [watch-animations](#chunk-watch-animations) · [defer-frame-callbacks](#chunk-defer-frame-callbacks) · [bounded-waits](#chunk-bounded-waits) · [hold-and-release](#chunk-hold-and-release)</sub>
 
 ```typescript {#hold-file file="src/hold.ts"}
 import { type DrawnLayer, makeLayer } from './drawn-layer.ts';
@@ -146,9 +168,10 @@ export function installHold(win: Window = window): Hold {
   <<watch-events>>
   <<watch-animations>>
   <<defer-frame-callbacks>>
+  <<bounded-waits>>
   <<hold-and-release>>
 
-  const api: Hold = { epoch: epochNow, changed: bump, hold, verify, held: () => held, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
+  const api: Hold = { epoch: epochNow, changed: bump, hold, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
   (win as any)[INSTALLED] = api;
   return api;
 }
@@ -299,6 +322,92 @@ const updates = (n: number) => new Promise<void>((done) => {
 });
 ```
 
+## When the page cannot paint
+
+A page whose window is not on the screen gets no rendering updates: a
+minimised or unmapped window, a tab behind another, and on macOS a window
+WebKit counts as occluded (`x0k:implementation/ui-control/tauri-plugin`, "The
+macOS host"). Its `document.visibilityState` reads `hidden`, and its
+animation frames stop until it is shown. A host that waited on a frame then
+heard nothing until its own wait ran out, 5 s in the Tauri plugin, and learned
+nothing from it. So no wait of the library's on a rendering update is open
+ended:
+
+- **Hidden, it answers at once.** A wait that starts while the page is hidden
+  answers why at once, and one already running ends when the page becomes
+  hidden, by its `visibilitychange` event. Each answers the reason, never a
+  frame.
+- **A frame that does not come is a bound.** A wait that has heard no
+  rendering update for `FRAME_WAIT_MS` ends, answers why, and leaves the page
+  marked as not painting until its next rendering update.
+- **The page says so.** `unpainted()` answers either reason, or nothing while
+  the page paints. It waits on nothing, so a host can ask it before every call
+  at the cost of a round trip.
+
+Four waits use it: the hold's wait for its pauses and its settle, an answer's
+wait for the rendering update after an action, a `present` or a `release`
+(`rendered`), and the settle after input (`settled`). The settle was the Tauri
+plugin's, a script of its own; it is the library's now, so one rule bounds
+every wait. It answers once three rendering updates in a row have heard no
+input event, or after `SETTLE_MS`, as before.
+
+`FRAME_WAIT_MS` is a second. Measured on arca, WebKitGTK's first animation
+frame after a page loaded under Xvfb came more than 500 ms later, so a shorter
+bound would call a page that paints one that cannot. A hidden page is told
+apart at once by its visibility; only a page that reads visible and paints
+nothing pays the bound, once.
+
+<a name="chunk-bounded-waits"></a><sub>`src/hold.ts` · `#bounded-waits`</sub>
+
+```typescript {#bounded-waits}
+const HIDDEN = 'the page is hidden: document.visibilityState is hidden, as for a minimised, unmapped or covered window';
+const hiddenNow = () => (doc.visibilityState === 'hidden' ? HIDDEN : undefined);
+// When a wait last ran out with no rendering update, until the next one comes.
+let stalledAt: number | undefined;
+const stalled = () => {
+  stalledAt ??= win.performance.now() - FRAME_WAIT_MS;
+  nativeRaf(() => { stalledAt = undefined; });
+};
+const unpainted = (): string | undefined => hiddenNow()
+  ?? (stalledAt === undefined ? undefined : `no rendering update has come for ${Math.round(win.performance.now() - stalledAt)} ms`);
+/** `wait`, or why the page cannot paint: it is or becomes hidden, or
+ * `FRAME_WAIT_MS` pass with `wait` unanswered. */
+const whilePainting = (wait: Promise<unknown>): Promise<string | undefined> => new Promise((done) => {
+  const now = unpainted();
+  if (now) return done(now);
+  let finished = false;
+  const finish = (why?: string) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    doc.removeEventListener('visibilitychange', onVisibility);
+    done(why);
+  };
+  const onVisibility = () => { const why = hiddenNow(); if (why) finish(why); };
+  doc.addEventListener('visibilitychange', onVisibility);
+  const timer = setTimeout(() => { stalled(); finish(unpainted()); }, FRAME_WAIT_MS);
+  wait.then(() => finish(), () => finish());
+});
+const rendered = () => whilePainting(new Promise<void>((done) => win.requestAnimationFrame(() => done())));
+const SETTLE_EVENTS = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
+const settled = async (): Promise<string | undefined> => {
+  let quiet = 0;
+  const heard = () => { quiet = 0; };
+  for (const kind of SETTLE_EVENTS) win.addEventListener(kind, heard, { capture: true, passive: true });
+  try {
+    const until = win.performance.now() + SETTLE_MS;
+    do {
+      const why = await rendered();
+      if (why) return why;
+      quiet += 1;
+    } while (quiet <= 2 && win.performance.now() < until);
+    return undefined;
+  } finally {
+    for (const kind of SETTLE_EVENTS) win.removeEventListener(kind, heard, { capture: true });
+  }
+};
+```
+
 ## The hold and its release
 
 A hold does four things in order. It stops the frame callbacks. It pauses
@@ -338,6 +447,8 @@ epoch, so that host's verify cannot match.
 let paused: { animation: Animation; startTime: CSSNumberish | null }[] = [];
 // Whether this hold hid the host's drawing, for the frame alone.
 let hidDrawn = false;
+// Why this hold's pauses did not take hold, when the page could not paint.
+let unheld: string | undefined;
 let lapse: ReturnType<typeof setTimeout> | undefined;
 const release = () => {
   if (!held) return;
@@ -367,15 +478,17 @@ const hold = async <T>(read: () => T, options: HoldOptions = {}): Promise<Held<T
     paused = doc.getAnimations().filter((a) => a.playState === 'running').map((animation) => ({ animation, startTime: animation.startTime }));
     for (const { animation } of paused) animation.pause();
     // A pause takes hold, on the compositor too, when its animation is ready.
-    await Promise.all(paused.map(({ animation }) => animation.ready));
+    if (paused.length > 0) unheld = await whilePainting(Promise.all(paused.map(({ animation }) => animation.ready)));
   }
   if (options.frameOnly && !hidDrawn) {
     layer.hide(true);
     hidDrawn = true;
   }
-  await updates(SETTLE_UPDATES);
+  const why = unheld ?? (await whilePainting(updates(SETTLE_UPDATES)));
+  unheld = undefined;
   const epoch = epochNow();
-  return { epoch, read: read(), holdMs: win.performance.now() - start };
+  const answered: Held<T> = { epoch, read: read(), holdMs: win.performance.now() - start };
+  return why ? { ...answered, unpainted: why } : answered;
 };
 const verify = (): number => {
   const epoch = epochNow();
@@ -433,9 +546,16 @@ declares when it installs the library (`x0k:implementation/ui-control/page-answe
 It picks each mark's colour from the look's palette by its index, or from the
 host's own palette when the look gives none, whose first colour is the ink the
 tests read. It draws an arrow or a dot, a ring of the look's radius, captions
-only when the look keeps them, and labels of its size naming each requester as
-the look's names say. A colour reaches the stylesheet as the mark's `--ink`, so
-the stylesheet stays one.
+only when the look keeps them, and labels of its size naming each requester.
+A label says the look's name for the requester, else the name the requester's
+sequence gives itself, which the host sends with its pointer as `name`
+(`Perform::requester_name`), else the requester as it is: the order of the
+protocol's `InputLook::name_given`, so a person's own naming outranks what a
+driver calls itself. In a page the library draws the label, so this is the
+rule's home for every host that paints on the layer, the Tauri plugin among
+them; the host passes the given name and resolves none. The colour stays the
+requester's, never the name's. A colour reaches the stylesheet as the mark's
+`--ink`, so the stylesheet stays one.
 
 <a name="chunk-drawn-layer"></a><sub>`src/drawn-layer.ts` · `#drawn-layer`</sub>
 
@@ -456,7 +576,7 @@ export interface InputLook {
  * each mark with its requester's colour index. */
 export interface Drawing {
   units: number;
-  pointers: { requester: string; at: [number, number]; pressed: boolean; hue?: number }[];
+  pointers: { requester: string; name?: string; at: [number, number]; pressed: boolean; hue?: number }[];
   clicks: { at: [number, number]; gone: number; hue?: number }[];
   keys?: { requester: string; text: string; gone: number; hue?: number };
 }
@@ -538,13 +658,15 @@ export function makeLayer(win: Window): DrawnLayer {
     const palette = declared.colors?.length ? declared.colors : PALETTE;
     (el as HTMLElement).style.setProperty('--ink', palette[hue % palette.length]);
   };
-  // The look's name for `requester`: an exact key's, else the longest prefix key's.
-  const named = (requester: string) => {
+  // The label for `requester`, whose sequence names it `given`: the look's
+  // name for it, an exact key's, else the longest prefix key's, else `given`,
+  // else the requester as it is.
+  const named = (requester: string, given?: string) => {
     const names = declared.names ?? {};
     if (requester in names) return names[requester];
     const prefixes = Object.keys(names).filter((key) => key.endsWith('*') && requester.startsWith(key.slice(0, -1)));
     const longest = prefixes.sort((a, b) => b.length - a.length)[0];
-    return longest ? names[longest] : requester;
+    return longest ? names[longest] : given || requester;
   };
   // A label beside a pointer at (`x`, `y`) in CSS pixels, `down` below its tip:
   // to its right, or to its left where it would run past the viewport's edge.
@@ -585,7 +707,7 @@ export function makeLayer(win: Window): DrawnLayer {
         ink(mark, pointer.hue);
         const name = doc.createElement('div');
         name.className = 'label';
-        name.textContent = named(pointer.requester);
+        name.textContent = named(pointer.requester, pointer.name);
         name.style.fontSize = `${size}px`;
         ink(name, pointer.hue);
         beside(name, pointer.at[0] * k, pointer.at[1] * k, 18);
@@ -621,8 +743,14 @@ page for the hold and the verify, to the platform for the capture.
 moved epoch drops the capture and holds again, up to `HOLD_TRIES` times. Then
 the capture is refused as `page_unsettled`, naming each pair of epochs it saw,
 and the last read is answered with the frame it was read at. A capture that
-fails is refused with the platform's reason. The refusal is the protocol's
-`PartRefused` for the `capture` part (`x0k:implementation/ui-control/protocol`).
+fails is refused with the platform's reason. A hold that answers the page
+could not paint is not captured: the host verifies, which releases the page,
+and refuses the capture as `cannot_paint` with the hold's reason, and its read
+is answered. The refusal is the protocol's `PartRefused` for the `capture`
+part (`x0k:implementation/ui-control/protocol`), with the protocol's code when
+one says why. `page_unsettled` has none: the page kept changing, and the next
+observation may well settle, so it is a reason for a person and the host's
+own word.
 
 <a name="chunk-held-capture"></a><sub>`src/held-capture.ts` · `#held-capture`</sub>
 
@@ -631,7 +759,7 @@ fails is refused with the platform's reason. The refusal is the protocol's
  * platform's capture and the page's verify, each a round trip to the page or
  * to the platform. */
 export interface HoldingHost<R, C> {
-  hold(): Promise<{ epoch: number; read: R; holdMs: number }>;
+  hold(): Promise<{ epoch: number; read: R; holdMs: number; unpainted?: string }>;
   capture(): Promise<C>;
   verify(): Promise<number>;
 }
@@ -642,7 +770,7 @@ export interface HeldCapture<R, C> {
   frame: string;
   read: R;
   capture?: C;
-  refused?: { part: 'capture'; why: string };
+  refused?: { part: 'capture'; code?: 'cannot_paint'; why: string };
   /** The hold's cost on each try, in ms. */
   holdMs: number[];
 }
@@ -660,6 +788,10 @@ export async function heldCapture<R, C>(host: HoldingHost<R, C>, tries = HOLD_TR
   for (let i = 0; i < tries; i++) {
     const held = await host.hold();
     holdMs.push(held.holdMs);
+    if (held.unpainted !== undefined) {
+      await host.verify();
+      return { frame: String(held.epoch), read: held.read, holdMs, refused: { part: 'capture', code: 'cannot_paint', why: held.unpainted } };
+    }
     let capture: C | undefined;
     let failure: unknown;
     try { capture = await host.capture(); } catch (e) { failure = e; }
@@ -1098,6 +1230,11 @@ export interface Engine {
   evaluate(body: string): Promise<string>;
   /** The platform's capture of the page as it shows now. */
   capture(): Promise<Image>;
+  /** Hide the page from the screen, as a window that does not present it:
+   * its `document.visibilityState` reads `hidden`. */
+  hide(): Promise<void>;
+  /** Show the page again after `hide`. */
+  show(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -1154,6 +1291,8 @@ export async function chromium(page: string, script: string, { width, height, ra
     const loaded = cdp.once('Page.loadEventFired');
     await cdp.send('Page.navigate', { url: page.includes('://') ? page : pathToFileURL(page).href });
     await loaded;
+    /** The tab opened in front of the page to hide it, while one is. */
+    let covering: string | undefined;
     return {
       name: `chromium at ratio ${ratio}`,
       version,
@@ -1163,6 +1302,11 @@ export async function chromium(page: string, script: string, { width, height, ra
         return r.result.value;
       },
       capture: async () => pngImage(Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png' })).data, 'base64')),
+      hide: async () => { covering ??= (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId; },
+      show: async () => {
+        if (covering) await cdp.send('Target.closeTarget', { targetId: covering });
+        covering = undefined;
+      },
       close: async () => { cdp.close(); await browser.stop(); },
     };
   } catch (e) {
@@ -1199,6 +1343,17 @@ async function devtools(url: string) {
   return { send, once, close: () => ws.close() };
 }
 ```
+
+Each engine can also hide its page, for the claims of a page that cannot
+paint. Chromium opens a second tab in front of the page with
+`Target.createTarget` and closes it to show the page again. Measured on arca
+in headless Chromium 148: behind the tab the page's `visibilityState` reads
+`hidden` and no animation frame comes within 500 ms; with the tab closed it
+reads `visible` and frames come again. WebKitGTK unmaps its window
+(`gtk_widget_hide`) and maps it again. Measured under Xvfb with WebKitGTK
+2.50: unmapped, the page reads `hidden` and no frame comes within 500 ms, while
+its timers still run on time. Iconifying the window changes nothing there,
+since Xvfb has no window manager to minimise it.
 
 **WebKitGTK** is the webview Tauri 2 uses on Linux, the `webkit2gtk-4.1` ABI.
 It has no protocol a test can speak to from outside, so a small GTK program
@@ -1237,6 +1392,8 @@ to the unix socket <socket> (a leading @ names an abstract one) and sends
 line it sends an answer, with the request's id:
   {"id", "op": "eval", "body"}  the body of an async function; its value, a string
   {"id", "op": "snap"}          the visible region: width, height, stride, BGRA bytes and a PNG, in base64
+  {"id", "op": "hide"}          unmap the window, so the page is hidden
+  {"id", "op": "show"}          map it again
 The test sends one request at a time and waits for its answer.
 """
 import base64
@@ -1276,8 +1433,10 @@ window.show_all()
 <<webkitgtk-host-requests>>
 ```
 
-The two requests, and the loop that reads them, are GTK's callback style:
-each request starts an asynchronous call, and its callback sends the answer.
+The requests, and the loop that reads them, are GTK's callback style: each
+request starts an asynchronous call, and its callback sends the answer. So a
+request can be answered while another waits, and the test's side gives each
+answer to the request with its id.
 
 <a name="chunk-webkitgtk-host-requests"></a><sub>`src/hold.ts` · `#webkitgtk-host-requests`</sub>
 
@@ -1319,6 +1478,12 @@ def on_line(channel, condition):
         evaluate(request["id"], request["body"])
     elif request["op"] == "snap":
         snap(request["id"])
+    elif request["op"] == "hide":
+        window.hide()
+        answer({"id": request["id"]})
+    elif request["op"] == "show":
+        window.show_all()
+        answer({"id": request["id"]})
     else:
         answer({"id": request["id"], "error": "unknown op " + request["op"]})
     return True
@@ -1391,6 +1556,8 @@ export async function webkitgtk(page: string, script: string, { width, height, c
         const r = await call({ op: 'snap' });
         return bgraImage(r.width, r.height, r.stride, Buffer.from(r.bgra, 'base64'), Buffer.from(r.png, 'base64'));
       },
+      hide: async () => { await call({ op: 'hide' }); },
+      show: async () => { await call({ op: 'show' }); },
       close: async () => { link.destroy(); await stopAll(); },
     };
   } catch (e) {
@@ -1415,10 +1582,21 @@ const link = await Promise.race([accepted, ended, deadline('load the page')]);
 const lines = createInterface({ input: link })[Symbol.asyncIterator]();
 const next = async () => JSON.parse((await Promise.race([lines.next(), ended, deadline('answer')])).value);
 const version = (await next()).ready;
+// Each answer goes to the request with its id, so a request may wait while another is answered.
+const waiting = new Map<number, (reply: any) => void>();
+void (async () => {
+  for (let line = await lines.next(); !line.done; line = await lines.next()) {
+    const reply = JSON.parse(line.value);
+    waiting.get(reply.id)?.(reply);
+    waiting.delete(reply.id);
+  }
+})();
 let last = 0;
 const call = async (request: object) => {
-  link.write(JSON.stringify({ id: ++last, ...request }) + '\n');
-  const reply = await next();
+  const id = ++last;
+  const answered = new Promise<any>((done) => waiting.set(id, done));
+  link.write(JSON.stringify({ id, ...request }) + '\n');
+  const reply = await Promise.race([answered, ended, deadline('answer')]);
   if (reply.error) throw new Error(reply.error);
   return reply;
 };

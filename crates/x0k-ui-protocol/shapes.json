@@ -624,6 +624,45 @@
               "kind": "list",
               "of": {
                 "fields": {
+                  "code": {
+                    "presence": "optional",
+                    "shape": {
+                      "kind": "maybe",
+                      "of": {
+                        "kind": "enum",
+                        "spelling": "text",
+                        "variants": {
+                          "cannot_paint": {},
+                          "declined": {},
+                          "duplicate_source": {},
+                          "fixture_ended": {},
+                          "misfit_arguments": {},
+                          "misfit_state": {},
+                          "no_fixtures": {},
+                          "no_history_interface": {},
+                          "no_input_interface": {},
+                          "outside_frame": {},
+                          "outside_grant": {},
+                          "policy_refuses": {},
+                          "showing_past": {},
+                          "stale_head": {},
+                          "takeover_not_granted": {},
+                          "takeover_unheld": {},
+                          "undeliverable_source": {},
+                          "unknown_action": {},
+                          "unknown_frame": {},
+                          "unknown_key": {},
+                          "unknown_node": {},
+                          "unknown_position": {},
+                          "unknown_source": {},
+                          "unreadable_policy": {},
+                          "unreadable_shape": {},
+                          "wrong_fingerprint": {},
+                          "wrong_source": {}
+                        }
+                      }
+                    }
+                  },
                   "part": {
                     "shape": {
                       "kind": "enum",
@@ -793,7 +832,10 @@
                     "kind": "enum",
                     "spelling": "text",
                     "variants": {
+                      "cannot_paint": {},
+                      "declined": {},
                       "duplicate_source": {},
+                      "fixture_ended": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
@@ -806,6 +848,7 @@
                       "stale_head": {},
                       "takeover_not_granted": {},
                       "takeover_unheld": {},
+                      "undeliverable_source": {},
                       "unknown_action": {},
                       "unknown_frame": {},
                       "unknown_key": {},
@@ -901,6 +944,15 @@
               "kind": "maybe",
               "of": {
                 "kind": "bool"
+              }
+            }
+          },
+          "requester_name": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "kind": "text"
               }
             }
           },
@@ -1150,7 +1202,10 @@
                     "kind": "enum",
                     "spelling": "text",
                     "variants": {
+                      "cannot_paint": {},
+                      "declined": {},
                       "duplicate_source": {},
+                      "fixture_ended": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
@@ -1163,6 +1218,7 @@
                       "stale_head": {},
                       "takeover_not_granted": {},
                       "takeover_unheld": {},
+                      "undeliverable_source": {},
                       "unknown_action": {},
                       "unknown_frame": {},
                       "unknown_key": {},
@@ -1383,7 +1439,10 @@
                     "kind": "enum",
                     "spelling": "text",
                     "variants": {
+                      "cannot_paint": {},
+                      "declined": {},
                       "duplicate_source": {},
+                      "fixture_ended": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
@@ -1396,6 +1455,7 @@
                       "stale_head": {},
                       "takeover_not_granted": {},
                       "takeover_unheld": {},
+                      "undeliverable_source": {},
                       "unknown_action": {},
                       "unknown_frame": {},
                       "unknown_key": {},
@@ -1474,7 +1534,10 @@
                     "kind": "enum",
                     "spelling": "text",
                     "variants": {
+                      "cannot_paint": {},
+                      "declined": {},
                       "duplicate_source": {},
+                      "fixture_ended": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
@@ -1487,6 +1550,7 @@
                       "stale_head": {},
                       "takeover_not_granted": {},
                       "takeover_unheld": {},
+                      "undeliverable_source": {},
                       "unknown_action": {},
                       "unknown_frame": {},
                       "unknown_key": {},
@@ -1707,7 +1771,10 @@
                     "kind": "enum",
                     "spelling": "text",
                     "variants": {
+                      "cannot_paint": {},
+                      "declined": {},
                       "duplicate_source": {},
+                      "fixture_ended": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
@@ -1720,6 +1787,7 @@
                       "stale_head": {},
                       "takeover_not_granted": {},
                       "takeover_unheld": {},
+                      "undeliverable_source": {},
                       "unknown_action": {},
                       "unknown_frame": {},
                       "unknown_key": {},
@@ -1771,6 +1839,24 @@
         "kind": "enum",
         "spelling": "keyed",
         "variants": {
+          "ended": {
+            "payload": {
+              "fields": {
+                "handle": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                },
+                "reason": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          },
           "not_standing": {
             "payload": {
               "fields": {
@@ -1792,7 +1878,10 @@
                     "kind": "enum",
                     "spelling": "text",
                     "variants": {
+                      "cannot_paint": {},
+                      "declined": {},
                       "duplicate_source": {},
+                      "fixture_ended": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
@@ -1805,6 +1894,7 @@
                       "stale_head": {},
                       "takeover_not_granted": {},
                       "takeover_unheld": {},
+                      "undeliverable_source": {},
                       "unknown_action": {},
                       "unknown_frame": {},
                       "unknown_key": {},
@@ -1859,9 +1949,9 @@
     }
   },
   "fingerprints": {
-    "ui/observe": "2798d02ebba5b71d",
-    "ui/act": "8cc9400abdac5c95",
-    "ui/input": "2d8245604c23fc09",
-    "ui/history": "fdc46b9a98c6af3e"
+    "ui/observe": "8295dcefa61695af",
+    "ui/act": "6058f1cd2a8a4d9d",
+    "ui/input": "ea51b70480a7bdc9",
+    "ui/history": "6b018751ab8e5e3d"
   }
 }

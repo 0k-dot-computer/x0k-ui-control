@@ -35,6 +35,21 @@
       "expect": {"fits": true}
     },
     {
+      "name": "a window the host cannot paint refuses the capture as cannot_paint and keeps the layout and state",
+      "input": {
+        "call": {"parts": ["capture", "layout", "state"]},
+        "observation": {
+          "frame": "f3",
+          "shown": {"kind": "live"},
+          "layout": {"id": "root", "role": "window", "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "visible": true, "enabled": true, "focused": false, "interactive": false},
+          "state": {"value": {"open": true}, "head": "h1", "fingerprint": "fp1"},
+          "refused": [{"part": "capture", "code": "cannot_paint", "why": "the window is minimised"}]
+        }
+      },
+      "expect": {"fits": true}
+    },
+    {
       "name": "a part neither answered nor refused",
       "input": {
         "call": {"parts": ["capture", "state"]},

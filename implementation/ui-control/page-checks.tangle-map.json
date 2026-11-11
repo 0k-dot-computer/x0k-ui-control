@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/page-checks.md",
-  "source_hash": "e348b60ec43ea57f",
+  "source_hash": "66a3677577b45548",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-protocol-wasm/Cargo.toml",
-          "hash": "b3b91bf40e62904f"
+          "hash": "0f901348b817c62b"
         },
         {
           "path": "crates/x0k-ui-protocol-wasm/src/lib.rs",

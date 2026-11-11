@@ -83,6 +83,11 @@ pub struct Perform {
     /// window from the sequence's first event to its answer.
     #[serde(default)]
     pub takeover: bool,
+    /// The name the requester gives itself for a person to read, such as
+    /// `Apollo` (`ui-interfaces` §6). A label only: the requester is the one
+    /// the connection names, and no check reads this.
+    #[serde(default)]
+    pub requester_name: Option<String>,
 }
 
 impl Perform {
@@ -203,8 +208,11 @@ pub fn check_perform(
     Ok(resolved)
 }
 
+/// The source kinds the model has.
+pub const SOURCE_KINDS: &[&str] = &["mouse", "pen", "touch", "key", "wheel"];
+
 fn check_kind(kind: &str) -> Result<(), Refused> {
-    if matches!(kind, "mouse" | "pen" | "touch" | "key" | "wheel") {
+    if SOURCE_KINDS.contains(&kind) {
         return Ok(());
     }
     Err(Refused::new(RefusalCode::UnknownSource, kind, format!("no input source is a {kind}")))
@@ -362,6 +370,15 @@ impl std::error::Error for TickFault {}
 /// whole sequence before any of it runs.
 pub fn undeliverable<'a>(perform: &'a Perform, delivers: &[&str]) -> Option<&'a Source> {
     perform.sources.iter().find(|source| !delivers.contains(&source.kind.as_str()))
+}
+
+/// Whether a host that delivers the source kinds `delivers` can deliver all of
+/// `perform` (§10).
+pub fn check_delivers(perform: &Perform, delivers: &[&str]) -> Result<(), Refused> {
+    let Some(source) = undeliverable(perform, delivers) else { return Ok(()) };
+    let kind = &source.kind;
+    let why = format!("the app's host cannot deliver {kind} input, which source {} is", source.id);
+    Err(Refused::new(RefusalCode::UndeliverableSource, kind, why))
 }
 
 /// `perform` as ticks, with each position and scroll delta over `scale`.

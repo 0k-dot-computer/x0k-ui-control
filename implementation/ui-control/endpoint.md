@@ -11,7 +11,8 @@ implementation:ui-control\/endpoint a x0k:Implementation ;
     x0k:implements architecture:ui-control-channel,
         architecture:ui-interfaces ;
     x0k:motivatedBy intent:92f84c75-af31-f9cd-2c7d-562143127bab,
-        intent:9a9b3f4d-35b5-11fc-0143-7f250b849a3a ;
+        intent:9a9b3f4d-35b5-11fc-0143-7f250b849a3a,
+        intent:2776ace9-bdc5-bc30-5b8b-1fa54a8cc19e ;
     folio:tangleCrate "crates/x0k-ui-endpoint" ;
     folio:tangleRoot "src/lib.rs" .
 ```
@@ -33,7 +34,7 @@ and the operations they share still work.
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-endpoint"
-version = "0.1.0"
+version = "0.2.0"
 edition = { workspace = true }
 license = "MIT"
 description = "The UI-control endpoint over the operation wire: an app's calls, the checks made before the app hears them, and a driver's client."
@@ -56,8 +57,8 @@ tracing = { workspace = true }
 x0k-datum = { version = "0.1.0" }
 x0k-operation-wire = { path = "../x0k-operation-wire", default-features = false , version = "0.1.0" }
 # The session the calls run on.
-x0k-operation-session = { path = "../x0k-operation-session", version = "0.1.0" }
-x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.1.0" }
+x0k-operation-session = { path = "../x0k-operation-session", version = "0.2.0" }
+x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.2.0" }
 # The profile's own runtime dir, where an endpoint binds.
 x0k-runtime-dir = { path = "../x0k-runtime-dir", version = "0.1.0" }
 
@@ -211,7 +212,14 @@ never reaches the app.
 
 A sequence of input reaches the app with its requester, so a host that draws
 input (`x0k:architecture/ui-control-channel` §10) can label the drawing with
-who asked. A sequence that asks for a takeover passes two checks before any of
+who asked. The sequence also carries the name the requester gives itself,
+`Perform::requester_name`, if it gives one (`x0k:architecture/ui-interfaces`
+§6); the host labels the drawing with the look's name for the requester, else
+that name (`InputLook::name_given`). The name is the sequence's and the
+requester is the connection's: the endpoint passes both, reads the name in
+no check, and asks a takeover for the requester.
+
+A sequence that asks for a takeover passes two checks before any of
 it runs. `check_perform` refuses it as `takeover_unheld` when the offer does
 not say the host holds one. The endpoint then asks the app whether the person
 grants the requester the takeover, and refuses it as `takeover_not_granted`
@@ -244,6 +252,54 @@ with the action, its class, the disposition and the fixture. `ui/input` reaches
 the app under a fixture, because driving the app in a given state is what a
 fixture is for; what input does after the app's own hit-testing is the app's to
 answer by the same policy.
+
+Three hooks let an app name a condition of its own or its host's, and the
+endpoint turns each into a refusal before the app runs anything
+(`x0k:architecture/ui-control-channel` §8 to §10, `x0k:architecture/ui-interfaces`
+§4). An app that names none answers as before.
+
+- `cannot_paint` answers why the app's host cannot paint its window now, such
+  as a minimised window or a sleeping display. The host decides at each call,
+  so a host that keeps painting a covered window or one on another space
+  answers `None` while it does. While the hook answers a
+  reason, an `invoke` is refused as `cannot_paint`, naming the action, and a
+  `perform` is refused the same way, naming `ui/input`, after each call's own
+  checks. An `observe` reaches the app without its capture, and the endpoint
+  adds the capture's refusal as `cannot_paint`, so the layout and the state
+  still come back. The endpoint asks the hook at every call and waits for no
+  frame, so the refusal comes back as fast as the hook answers. A host that
+  paints answers `None`, and every call runs.
+- `delivers` names the source kinds the app's host delivers, every kind the
+  model has by default. A sequence with a source of any other kind the model
+  has is refused as `undeliverable_source`, naming the kind (`check_delivers`),
+  before any of it runs.
+- `declines` answers why the app declines a call for now while a fixture
+  stands, such as an approval that waits for a person. The endpoint asks it of
+  an `invoke` and a `perform` under a fixture, and refuses the call as
+  `declined` before the replay policy disposes of it. A `present` the app
+  declines is the app's own answer: `PresentAnswer::Refused` with
+  `RefusalCode::Declined`, naming `ui/history`, and with that refusal no
+  fixture stands.
+
+Under one call, the order is the call's own checks, then what the host never
+delivers, then whether the host can paint, then what the app shows, then
+what the app declines. So a driver hears first what holds of the call wherever
+it is sent, and last what may change by the next call.
+
+An app may end a fixture that stands itself, such as when an approval arrives
+for a person, and show its live state (`x0k:architecture/ui-interfaces` §4).
+It keeps why, and answers it from a fourth hook, `fixture_ended`, by handle.
+The endpoint asks it only when its own record says the calling session
+presented a fixture that the app no longer shows. That session's next `invoke`
+or `perform` is then refused as `fixture_ended`, naming the handle with the
+app's reason, at the step for what the app shows; the record is cleared, so
+the session hears it once and its later calls run live. A `release` the app
+answers `not_standing` is answered `ended` with the reason when the app says
+it ended that fixture. An app that names no reason keeps today's answers, and
+a session that never presented the fixture is told nothing, since it sent
+nothing expecting it. The endpoint asks at the call rather than the app
+telling it when it ends the fixture, so no call can slip between the app's
+ending and the endpoint's knowing.
 
 Each connection is one session. The endpoint remembers which session last took
 the app to a past position or presented a fixture, and when that session ends it
@@ -281,9 +337,9 @@ use x0k_ui_protocol::fixture::{check_present, PresentCall, ReleaseCall};
 use x0k_ui_protocol::history::{
     check_navigate, check_while_shown, Destination, History, HistoryCall, NavigateCall, Shown,
 };
-use x0k_ui_protocol::input::{check_perform, HeldFrame, Perform, Resolved};
-use x0k_ui_protocol::observe::{Observation, ObserveCall, StatePart};
-use x0k_ui_protocol::offer::{Action, Offer, UI_HISTORY};
+use x0k_ui_protocol::input::{check_delivers, check_perform, HeldFrame, Perform, Resolved, SOURCE_KINDS};
+use x0k_ui_protocol::observe::{while_cannot_paint, Observation, ObserveCall, StatePart};
+use x0k_ui_protocol::offer::{Action, Offer, UI_HISTORY, UI_INPUT};
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose, ReplayDisposition};
 use x0k_ui_protocol::{Refused, RefusalCode};
 
@@ -379,6 +435,38 @@ pub trait UiApp: Send + Sync + 'static {
         let reason = format!("the app has no sandbox {sandbox}");
         async move { Outcome::Failed { reason, frame: None } }
     }
+
+    /// Why the app's host cannot paint its window now, decided at the call:
+    /// a minimised window, a sleeping display. `None` is a host that paints,
+    /// covered or not.
+    fn cannot_paint(&self) -> impl Future<Output = Option<String>> + Send {
+        async { None }
+    }
+
+    /// The source kinds the app's host delivers.
+    fn delivers(&self) -> &[&str] {
+        SOURCE_KINDS
+    }
+
+    /// Why the app declines `call` for now while a fixture stands, such as an
+    /// approval that waits for a person. `None` lets it run.
+    fn declines(&self, _call: Declinable<'_>) -> impl Future<Output = Option<String>> + Send {
+        async { None }
+    }
+
+    /// Why the app ended the fixture `handle` itself and went back to its live
+    /// state, as when an approval arrives for a person (`ui-interfaces` §4).
+    /// `None` while it stands, and for a fixture the app did not end.
+    fn fixture_ended(&self, _handle: &str) -> impl Future<Output = Option<String>> + Send {
+        async { None }
+    }
+}
+
+/// A call an app may decline while a fixture stands (`ui-interfaces` §4).
+#[derive(Clone, Copy, Debug)]
+pub enum Declinable<'c> {
+    Invoke(&'c Action),
+    Perform(&'c Perform),
 }
 
 fn no_history() -> Refused {
@@ -418,13 +506,42 @@ impl<A: UiApp> Endpoint<A> {
         }
     }
 
-    async fn invoke(&self, invoke: Invoke) -> InvokeAnswer {
+    /// The refusal `session` hears once when the app has ended the fixture
+    /// the session presented: its record says the fixture stands, the app
+    /// shows another state, and the app says why it ended it. Telling it
+    /// clears the record, so the session's later calls run on what the app
+    /// shows.
+    async fn told_ended(&self, session: Option<u64>, shown: &Shown) -> Option<Refused> {
+        let left = self.left.lock().ok()?.clone();
+        let Some(Left::Fixture { session: by, handle: presented }) = left else { return None };
+        if by != session {
+            return None;
+        }
+        if matches!(shown, Shown::Fixture { handle } if *handle == presented) {
+            return None;
+        }
+        let reason = self.app.fixture_ended(&presented).await?;
+        let mut left = self.left.lock().ok()?;
+        if !matches!(&*left, Some(Left::Fixture { handle, .. }) if *handle == presented) {
+            return None;
+        }
+        *left = None;
+        Some(Refused::new(RefusalCode::FixtureEnded, &presented, reason))
+    }
+
+    async fn invoke(&self, invoke: Invoke, session: Option<u64>) -> InvokeAnswer {
         let offer = self.app.offer().await;
         let action = match check_invoke(&offer, &self.grant, &invoke) {
             Ok(action) => action,
             Err(refused) => return InvokeAnswer::Refused(refused),
         };
+        if let Some(why) = self.app.cannot_paint().await {
+            return InvokeAnswer::Refused(Refused::new(RefusalCode::CannotPaint, &action.name, why));
+        }
         let shown = self.app.shown().await;
+        if let Some(refused) = self.told_ended(session, &shown).await {
+            return InvokeAnswer::Refused(refused);
+        }
         if let Err(refused) = check_while_shown(&shown, Some(action.side_effect)) {
             return InvokeAnswer::Refused(refused);
         }
@@ -432,6 +549,18 @@ impl<A: UiApp> Endpoint<A> {
             return outcome_answer(self.app.invoke(action, invoke.args).await);
         };
         <<invoke-under-a-fixture>>
+    }
+
+    /// One observation; while the host cannot paint the window, the app answers the
+    /// call without its capture, and the capture is refused as `cannot_paint`.
+    async fn observe(&self, call: ObserveCall) -> Observation {
+        let Some(why) = self.app.cannot_paint().await else {
+            return self.app.observe(call).await;
+        };
+        let (call, refused) = while_cannot_paint(&call, &why);
+        let mut observation = self.app.observe(call).await;
+        observation.refused.extend(refused);
+        observation
     }
 
     async fn present(&self, call: PresentCall, session: Option<u64>) -> PresentAnswer {
@@ -449,8 +578,13 @@ impl<A: UiApp> Endpoint<A> {
     }
 
     async fn release(&self, call: ReleaseCall) -> ReleaseAnswer {
-        let answer = self.app.release(call.handle.clone()).await;
-        let released = matches!(answer, ReleaseAnswer::Released { .. });
+        let mut answer = self.app.release(call.handle.clone()).await;
+        if let ReleaseAnswer::NotStanding { handle } = &answer {
+            if let Some(reason) = self.app.fixture_ended(handle).await {
+                answer = ReleaseAnswer::Ended { handle: handle.clone(), reason };
+            }
+        }
+        let released = matches!(answer, ReleaseAnswer::Released { .. } | ReleaseAnswer::Ended { .. });
         if let (true, Ok(mut left)) = (released, self.left.lock()) {
             if matches!(&*left, Some(Left::Fixture { handle, .. }) if *handle == call.handle) {
                 *left = None;
@@ -459,15 +593,30 @@ impl<A: UiApp> Endpoint<A> {
         answer
     }
 
-    async fn perform(&self, perform: Perform, requester: &str) -> PerformAnswer {
+    async fn perform(&self, perform: Perform, session: Option<u64>, requester: &str) -> PerformAnswer {
         let offer = self.app.offer().await;
         let frames = self.app.held_frames().await;
         let resolved = match check_perform(&offer, &frames, &perform) {
             Ok(resolved) => resolved,
             Err(refused) => return PerformAnswer::Refused(refused),
         };
-        if let Err(refused) = check_while_shown(&self.app.shown().await, None) {
+        if let Err(refused) = check_delivers(&perform, self.app.delivers()) {
             return PerformAnswer::Refused(refused);
+        }
+        if let Some(why) = self.app.cannot_paint().await {
+            return PerformAnswer::Refused(Refused::new(RefusalCode::CannotPaint, UI_INPUT, why));
+        }
+        let shown = self.app.shown().await;
+        if let Some(refused) = self.told_ended(session, &shown).await {
+            return PerformAnswer::Refused(refused);
+        }
+        if let Err(refused) = check_while_shown(&shown, None) {
+            return PerformAnswer::Refused(refused);
+        }
+        if let Shown::Fixture { .. } = shown {
+            if let Some(why) = self.app.declines(Declinable::Perform(&perform)).await {
+                return PerformAnswer::Refused(Refused::new(RefusalCode::Declined, UI_INPUT, why));
+            }
         }
         if perform.takeover && !self.app.grant_takeover(requester).await {
             let why = format!("the person did not grant {requester} a takeover");
@@ -523,12 +672,9 @@ impl<A: UiApp> Endpoint<A> {
     async fn answer(&self, heard: &Heard, session: Option<u64>, requester: &str) -> Result<Datum, BadValue> {
         match heard.operation.as_str() {
             OFFER => to_wire(&self.app.offer().await),
-            OBSERVE => {
-                let call: ObserveCall = from_wire(&heard.argument)?;
-                encode_observation(&self.app.observe(call).await)
-            }
-            INVOKE => to_wire(&self.invoke(from_wire(&heard.argument)?).await),
-            PERFORM => to_wire(&self.perform(from_wire(&heard.argument)?, requester).await),
+            OBSERVE => encode_observation(&self.observe(from_wire(&heard.argument)?).await),
+            INVOKE => to_wire(&self.invoke(from_wire(&heard.argument)?, session).await),
+            PERFORM => to_wire(&self.perform(from_wire(&heard.argument)?, session, requester).await),
             HISTORY => to_wire(&self.history(from_wire(&heard.argument)?).await),
             NAVIGATE => to_wire(&self.navigate(from_wire(&heard.argument)?, session).await),
             PRESENT => to_wire(&self.present(from_wire(&heard.argument)?, session).await),
@@ -682,6 +828,9 @@ sandbox, since `disposition` gives one wherever it chooses `sandboxed` and
 ```rust {#invoke-under-a-fixture}
 if let Err(refused) = check_replay_policy(&offer) {
     return InvokeAnswer::Refused(refused);
+}
+if let Some(why) = self.app.declines(Declinable::Invoke(action)).await {
+    return InvokeAnswer::Refused(Refused::new(RefusalCode::Declined, &action.name, why));
 }
 let taken = disposition(&offer, Purpose::Vary, action.side_effect, &action.name);
 tracing::info!(
@@ -1048,6 +1197,17 @@ impl UiClient {
 The test is a small app on an in-memory pipe, driven through the client. The
 claims are the ones §9 and §10 make of an endpoint rather than of a check: a
 refused call never reaches the app, and a capture's bytes survive the wire.
+The three hooks hold the same way: while the app says its window is not
+visible, an action and a sequence are refused as `cannot_paint` and the app
+runs neither, and an observation refuses the capture and keeps the layout and
+the state; a kind the host does not deliver is refused as
+`undeliverable_source` and the app hears nothing; an action and a sequence the
+app declines under a fixture are refused as `declined`, and the same app runs
+them live. A fixture the app ends itself is told to the session that presented
+it, once, as `fixture_ended` with the app's reason, and to no other session; its
+release answers `ended` with the reason. A sequence's `requester_name` reaches
+the app beside the connection's requester, and a takeover is asked for the
+requester however the sequence names itself.
 Under a fixture the same holds of a stand-in: a simulated action never reaches
 the app, and neither does one under a policy that lowers a floor. The suite
 sees only the answers, so these two are the endpoint's to hold. What
@@ -1064,13 +1224,13 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use x0k_ui_endpoint::client::UiClient;
-use x0k_ui_endpoint::server::{serve_connection, serve_connection_from, Endpoint, UiApp};
-use x0k_ui_endpoint::{InvokeAnswer, PerformAnswer};
+use x0k_ui_endpoint::server::{serve_connection, serve_connection_from, Declinable, Endpoint, UiApp};
+use x0k_ui_endpoint::{InvokeAnswer, PerformAnswer, ReleaseAnswer};
 use x0k_ui_protocol::act::{Grant, Invoke, Outcome};
-use x0k_ui_protocol::fixture::{Fixture, PresentAnswer, PresentCall};
+use x0k_ui_protocol::fixture::{Fixture, PresentAnswer, PresentCall, ReleaseCall};
 use x0k_ui_protocol::history::{HistoryOffer, Shown};
 use x0k_ui_protocol::input::{HeldFrame, InputOffer, Perform, Resolved, Source, Step, Target};
-use x0k_ui_protocol::observe::{Capture, Observation, ObserveCall, Part};
+use x0k_ui_protocol::observe::{check_observation, Bounds, Capture, LayoutNode, Observation, ObserveCall, Part};
 use x0k_ui_protocol::observe::StatePart;
 use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY};
 use x0k_ui_protocol::replay::{Covers, PolicyEntry, ReplayDisposition};
@@ -1089,6 +1249,47 @@ struct Demo {
     takes_over: Option<bool>,
     /// The requester of each sequence it ran.
     requesters: Arc<Mutex<Vec<String>>>,
+    /// Why its host cannot paint its window, when it cannot.
+    unpainted: Option<String>,
+    /// The source kinds its host delivers, when not every kind.
+    delivers: Option<&'static [&'static str]>,
+    /// Why it declines actions and input under a fixture, when it does.
+    declines: Option<String>,
+    /// The fixture it ended itself, and why.
+    ended: Arc<Mutex<Option<(String, String)>>>,
+    /// The one requester the person grants a takeover, when there is one.
+    grants_to: Option<&'static str>,
+    /// Whom the person was asked to grant a takeover.
+    asked: Arc<Mutex<Vec<String>>>,
+    /// The name each sequence it ran gave its requester.
+    names: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+impl Demo {
+    /// End the fixture that stands, for `reason`, and show the live state.
+    fn end_fixture(&self, reason: &str) {
+        let handle = self.fixture.lock().expect("the demo's lock").take().expect("a fixture stands");
+        *self.ended.lock().expect("the demo's lock") = Some((handle, reason.to_string()));
+    }
+}
+
+fn window() -> LayoutNode {
+    LayoutNode {
+        id: "root".to_string(),
+        role: "window".to_string(),
+        label: None,
+        value: None,
+        bounds: Bounds { x: 0.0, y: 0.0, width: 4.0, height: 2.0 },
+        laid_out: None,
+        visible: true,
+        enabled: true,
+        focused: false,
+        interactive: false,
+        action: None,
+        source: None,
+        composition: None,
+        children: Vec::new(),
+    }
 }
 
 fn any_shape() -> x0k_datum::Datum {
@@ -1117,12 +1318,17 @@ impl UiApp for Demo {
         }
     }
 
-    async fn observe(&self, _call: ObserveCall) -> Observation {
+    async fn observe(&self, call: ObserveCall) -> Observation {
+        let wants = |part| call.parts.contains(&part);
+        let capture = Capture { png: vec![0, 159, 146, 150], width: 4, height: 2, scale_factor: 2.0, presented: false };
         Observation {
             frame: Some("f1".to_string()),
-            capture: Some(Capture { png: vec![0, 159, 146, 150], width: 4, height: 2, scale_factor: 2.0, presented: false }),
-            layout: None,
-            state: None,
+            capture: wants(Part::Capture).then_some(capture),
+            layout: wants(Part::Layout).then(window),
+            state: match wants(Part::State) {
+                true => self.live_state().await,
+                false => None,
+            },
             refused: Vec::new(),
             shown: Some(Shown::Live),
         }
@@ -1144,11 +1350,13 @@ impl UiApp for Demo {
 
     async fn perform_for(&self, requester: &str, perform: Perform, resolved: Vec<Resolved>) -> Option<String> {
         self.requesters.lock().expect("the demo's lock").push(requester.to_string());
+        self.names.lock().expect("the demo's lock").push(perform.requester_name.clone());
         self.perform(perform, resolved).await
     }
 
-    async fn grant_takeover(&self, _requester: &str) -> bool {
-        self.takes_over == Some(true)
+    async fn grant_takeover(&self, requester: &str) -> bool {
+        self.asked.lock().expect("the demo's lock").push(requester.to_string());
+        self.takes_over == Some(true) || self.grants_to == Some(requester)
     }
 
     async fn shown(&self) -> Shown {
@@ -1169,6 +1377,32 @@ impl UiApp for Demo {
     async fn present(&self, _state: Value) -> PresentAnswer {
         *self.fixture.lock().expect("the demo's lock") = Some("x1".to_string());
         PresentAnswer::Presented { handle: "x1".to_string(), frame: Some("f4".to_string()) }
+    }
+
+    async fn cannot_paint(&self) -> Option<String> {
+        self.unpainted.clone()
+    }
+
+    fn delivers(&self) -> &[&str] {
+        self.delivers.unwrap_or(x0k_ui_protocol::input::SOURCE_KINDS)
+    }
+
+    async fn declines(&self, _call: Declinable<'_>) -> Option<String> {
+        self.declines.clone()
+    }
+
+    async fn release(&self, handle: String) -> ReleaseAnswer {
+        let mut fixture = self.fixture.lock().expect("the demo's lock");
+        if fixture.as_deref() != Some(handle.as_str()) {
+            return ReleaseAnswer::NotStanding { handle };
+        }
+        *fixture = None;
+        ReleaseAnswer::Released { frame: Some("f5".to_string()) }
+    }
+
+    async fn fixture_ended(&self, handle: &str) -> Option<String> {
+        let ended = self.ended.lock().expect("the demo's lock");
+        ended.as_ref().filter(|(ended, _)| ended == handle).map(|(_, reason)| reason.clone())
     }
 }
 
@@ -1267,6 +1501,59 @@ async fn input_reaches_the_app_resolved_or_not_at_all() {
     assert_eq!(demo.performed.lock().expect("the lock").len(), 1);
 }
 
+#[tokio::test]
+async fn while_the_host_cannot_paint_an_action_and_input_are_refused_as_cannot_paint_and_never_run() {
+    let demo = Demo { unpainted: Some("the window is minimised".to_string()), ..Demo::default() };
+    let (client, demo) = driven_as(demo, Grant { classes: vec![SideEffect::NonIdempotent] }).await;
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    let InvokeAnswer::Refused(refused) = client.invoke(&invoke).await.expect("an answer") else {
+        panic!("the action was answered");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::CannotPaint, Some("chat.send")));
+    let PerformAnswer::Refused(refused) = client.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::CannotPaint, Some("ui/input")));
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "an action ran while the host could not paint");
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "input ran while the host could not paint");
+
+    let PerformAnswer::Refused(refused) = client.perform(&click_at(500.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!(refused.code, RefusalCode::OutsideFrame, "the call's own checks come first");
+}
+
+#[tokio::test]
+async fn while_the_host_cannot_paint_an_observation_refuses_the_capture_and_keeps_the_layout_and_state() {
+    let demo = Demo { unpainted: Some("the window is minimised".to_string()), ..Demo::default() };
+    let (client, _) = driven_as(demo, Grant { classes: vec![] }).await;
+    let call = ObserveCall { parts: vec![Part::Capture, Part::Layout, Part::State], region: None, scale: None, frame_only: false };
+    let observation = client.observe(&call).await.expect("an observation");
+    assert_eq!(check_observation(&call, &observation), Ok(()), "{observation:?}");
+    assert!(observation.capture.is_none(), "a capture came back");
+    let refused: Vec<_> = observation.refused.iter().map(|refused| (refused.part, refused.code)).collect();
+    assert_eq!(refused, vec![(Part::Capture, Some(RefusalCode::CannotPaint))]);
+    assert!(observation.layout.is_some() && observation.state.is_some(), "{observation:?}");
+
+    let (client, _) = driven(Grant { classes: vec![] }).await;
+    let observation = client.observe(&call).await.expect("an observation");
+    assert!(observation.capture.is_some() && observation.refused.is_empty(), "a visible window answers every part");
+}
+
+#[tokio::test]
+async fn a_source_kind_the_host_does_not_deliver_is_refused_as_undeliverable_and_never_reaches_the_app() {
+    let demo = Demo { delivers: Some(&["mouse", "key", "wheel"]), ..Demo::default() };
+    let (client, demo) = driven_as(demo, Grant { classes: vec![] }).await;
+    let touch = Perform { sources: vec![Source { kind: "touch".to_string(), ..click_at(5.0).sources[0].clone() }], ..Perform::default() };
+    let PerformAnswer::Refused(refused) = client.perform(&touch).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::UndeliverableSource, Some("touch")));
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "the app heard a touch it cannot deliver");
+    let answer = client.perform(&click_at(5.0)).await.expect("an answer");
+    assert_eq!(answer, PerformAnswer::Done { frame: Some("f3".to_string()) });
+}
+
 /// A session with `demo` showing a fixture.
 async fn under_a_fixture(demo: Demo) -> (UiClient, Demo) {
     let (client, demo) = driven_as(demo, Grant { classes: vec![SideEffect::NonIdempotent] }).await;
@@ -1284,6 +1571,93 @@ async fn under_a_fixture_a_non_idempotent_action_is_simulated_and_never_reaches_
     let answer = client.invoke(&invoke).await.expect("an answer");
     assert_eq!(answer, InvokeAnswer::Simulated { action: "chat.send".to_string() });
     assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "a simulated action ran");
+}
+
+#[tokio::test]
+async fn under_a_fixture_an_action_and_input_the_app_declines_are_refused_as_declined_and_run_live() {
+    let declining = Demo { declines: Some("an approval waits for a person".to_string()), ..Demo::default() };
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    let (live, demo) = driven_as(declining.clone(), Grant { classes: vec![SideEffect::NonIdempotent] }).await;
+    assert!(matches!(live.invoke(&invoke).await.expect("an answer"), InvokeAnswer::Done { .. }), "live, nothing is declined");
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 1);
+
+    let (client, demo) = under_a_fixture(Demo { invoked: Arc::default(), ..declining }).await;
+    let InvokeAnswer::Refused(refused) = client.invoke(&invoke).await.expect("an answer") else {
+        panic!("the action was answered");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::Declined, Some("chat.send")));
+    assert_eq!(refused.why, "an approval waits for a person");
+    let PerformAnswer::Refused(refused) = client.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::Declined, Some("ui/input")));
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "a declined action ran");
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "declined input ran");
+}
+
+/// Why the demo ends its fixture.
+const ARRIVED: &str = "an approval arrived for a person";
+
+#[tokio::test]
+async fn a_fixture_the_app_ends_is_told_once_to_its_presenter_and_its_release_names_why() {
+    let (client, demo) = under_a_fixture(Demo::default()).await;
+    demo.end_fixture(ARRIVED);
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    let InvokeAnswer::Refused(refused) = client.invoke(&invoke).await.expect("an answer") else {
+        panic!("the action ran on the live state unannounced");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref(), refused.why.as_str()), (RefusalCode::FixtureEnded, Some("x1"), ARRIVED));
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "the refused action ran");
+    let answer = client.invoke(&invoke).await.expect("an answer");
+    assert!(matches!(answer, InvokeAnswer::Done { .. }), "told once, the next action runs live: {answer:?}");
+    let answer = client.release(&ReleaseCall { handle: "x1".to_string() }).await.expect("an answer");
+    assert_eq!(answer, ReleaseAnswer::Ended { handle: "x1".to_string(), reason: ARRIVED.to_string() });
+    let answer = client.release(&ReleaseCall { handle: "x9".to_string() }).await.expect("an answer");
+    assert_eq!(answer, ReleaseAnswer::NotStanding { handle: "x9".to_string() }, "a handle that never stood");
+}
+
+/// A session of its own with `endpoint`.
+async fn session(endpoint: &Arc<Endpoint<Demo>>) -> UiClient {
+    let (ours, theirs) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(serve_connection(theirs, Arc::clone(endpoint)));
+    UiClient::open(ours).await.expect("a session")
+}
+
+#[tokio::test]
+async fn only_the_session_that_presented_a_fixture_the_app_ended_hears_it_ended() {
+    let demo = Demo::default();
+    let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
+    let (presenter, other) = (session(&endpoint).await, session(&endpoint).await);
+    let fixture = Fixture::Patch { patch: json!({}) };
+    let call = PresentCall { fixture, fingerprint: shape_pin(&any_shape()), if_match: None };
+    assert!(matches!(presenter.present(&call).await.expect("an answer"), PresentAnswer::Presented { .. }));
+    demo.end_fixture(ARRIVED);
+    let answer = other.perform(&click_at(5.0)).await.expect("an answer");
+    assert_eq!(answer, PerformAnswer::Done { frame: Some("f3".to_string()) }, "a session that presented nothing");
+    let PerformAnswer::Refused(refused) = presenter.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the presenter's sequence ran on the live state unannounced");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref(), refused.why.as_str()), (RefusalCode::FixtureEnded, Some("x1"), ARRIVED));
+    assert_eq!(demo.performed.lock().expect("the lock").len(), 1, "the refused sequence ran");
+}
+
+#[tokio::test]
+async fn a_requester_name_reaches_the_app_and_a_takeover_is_asked_for_the_connection_s_requester() {
+    let demo = Demo { takes_over: Some(false), grants_to: Some("Apollo"), ..Demo::default() };
+    let (ours, theirs) = tokio::io::duplex(64 * 1024);
+    let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
+    tokio::spawn(serve_connection_from(theirs, endpoint, "uid 501 pid 7".to_string()));
+    let client = UiClient::open(ours).await.expect("a session");
+    let named = Perform { requester_name: Some("Apollo".to_string()), ..click_at(1.0) };
+    let answer = client.perform(&named).await.expect("an answer");
+    assert!(matches!(answer, PerformAnswer::Done { .. }), "{answer:?}");
+    assert_eq!(*demo.names.lock().expect("the lock"), vec![Some("Apollo".to_string())]);
+    assert_eq!(*demo.requesters.lock().expect("the lock"), vec!["uid 501 pid 7".to_string()]);
+
+    let answer = client.perform(&Perform { takeover: true, ..named }).await.expect("an answer");
+    let PerformAnswer::Refused(refused) = answer else { panic!("a name won a takeover: {answer:?}") };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::TakeoverNotGranted, Some("uid 501 pid 7")));
+    assert_eq!(*demo.asked.lock().expect("the lock"), vec!["uid 501 pid 7".to_string()]);
 }
 
 #[tokio::test]

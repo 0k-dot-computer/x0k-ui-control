@@ -35,7 +35,7 @@ the decision they hold it to.
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-protocol"
-version = "0.1.0"
+version = "0.2.0"
 edition = { workspace = true }
 license = "MIT"
 description = "What an app and a driver say over the UI-control endpoint: the offer, an observation, an action, a sequence of input, and the checks made on them."
@@ -92,6 +92,9 @@ pub enum RefusalCode {
     NoInputInterface,
     /// `ui/input`: a source of a kind the model does not have.
     UnknownSource,
+    /// `ui/input`: a source of a kind the model has and the app's host cannot
+    /// deliver, such as a touch on a host with no touch events.
+    UndeliverableSource,
     /// `ui/input`: two sources share an id.
     DuplicateSource,
     /// `ui/input`: an action its source cannot perform.
@@ -129,6 +132,15 @@ pub enum RefusalCode {
     UnreadablePolicy,
     /// `ui/act`: while a fixture stands, the replay policy refuses the action.
     PolicyRefuses,
+    /// `ui/act`, `ui/input`, and an observation's capture: the app's host
+    /// cannot paint its window now, so no frame would show.
+    CannotPaint,
+    /// `ui/history`'s `present`, and `ui/act` or `ui/input` while a fixture
+    /// stands: the app declines the call for now, for the reason it gives.
+    Declined,
+    /// `ui/act`, `ui/input`: the app ended the fixture the session presented,
+    /// for the reason it gives, and shows its live state.
+    FixtureEnded,
 }
 
 /// A call refused before anything ran.
@@ -143,7 +155,8 @@ pub struct Refused {
 }
 
 impl Refused {
-    pub(crate) fn new(code: RefusalCode, subject: &str, why: impl Into<String>) -> Self {
+    /// A refusal of `code` about `subject`.
+    pub fn new(code: RefusalCode, subject: &str, why: impl Into<String>) -> Self {
         Refused { code, subject: Some(subject.to_string()), why: why.into() }
     }
 }
@@ -156,6 +169,27 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 ```
+
+Three refusals name a condition of the app or its host, not a fault in the
+call, so a driver can tell a call to try elsewhere or later from one to fix:
+
+| Code | Subject | When |
+|---|---|---|
+| `cannot_paint` | the action, or `ui/input` | the host cannot paint the window now, such as a minimised window or a sleeping display (§8 to §10) |
+| `declined` | the action, `ui/input`, or `ui/history` for a `present` | the app declines for now, with its reason (`ui-interfaces` §4) |
+| `undeliverable_source` | the source's kind | the model has the kind, and the host cannot deliver it (§10) |
+| `fixture_ended` | the fixture's handle | the app ended the fixture the session presented, with its reason, and the session's call would meet the live state (`ui-interfaces` §4) |
+
+`cannot_paint` exists because a host that waits for a frame its window cannot
+paint answers only when its wait runs out, and a driver learns nothing from
+that. `declined` is apart from `misfit_state`, because the state fits and the
+app's own condition refuses it, such as an approval waiting for a person.
+`undeliverable_source` is apart from `unknown_source`, because the kind is one
+the model has, and another host may deliver it. `fixture_ended` is apart from
+`declined`: the app declines one call and the fixture still stands, and after
+`fixture_ended` the fixture is gone and the session's next call runs live. A
+session hears `fixture_ended` once, on its first `invoke` or `perform` after
+the app ended its fixture.
 
 ## The offer
 
@@ -265,6 +299,12 @@ produce is refused by name and the other parts are kept, so `refused` sits
 beside them. An app that presents no frame has no frame to name, answers the
 layout and the state, and refuses the capture.
 
+A part's refusal carries a code when one of the protocol's words says why.
+While the host cannot paint the window, the capture is
+refused as `cannot_paint`; `while_cannot_paint` takes the capture out of a call
+and answers its refusal, so the app answers the rest. A refusal with no code
+is a reason for a person, and a driver reads only that the part is missing.
+
 `check_observation` is how a driver or a test holds an app to that. Bounds are
 in the capture's pixels, so a visible node has to lie inside the capture. A
 node's id names the same part of the surface from frame to frame while that part
@@ -288,6 +328,7 @@ use x0k_datum::shape::{Shape, TypeShape};
 use x0k_datum::Datum;
 
 pub use crate::history::Shown;
+use crate::RefusalCode;
 
 /// A part of an observation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Shape)]
@@ -462,7 +503,24 @@ pub struct StatePart {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Shape)]
 pub struct PartRefused {
     pub part: Part,
+    /// Why, in the protocol's words, when one of them says it.
+    #[serde(default)]
+    pub code: Option<RefusalCode>,
+    /// The reason, for a person.
     pub why: String,
+}
+
+/// The call an app whose host cannot paint its window answers in place of `call`:
+/// the same parts without the capture, and the capture's refusal when `call`
+/// asks for one (§8).
+pub fn while_cannot_paint(call: &ObserveCall, why: &str) -> (ObserveCall, Option<PartRefused>) {
+    let parts = call.parts.iter().copied().filter(|part| *part != Part::Capture).collect();
+    let refused = call.parts.contains(&Part::Capture).then(|| PartRefused {
+        part: Part::Capture,
+        code: Some(RefusalCode::CannotPaint),
+        why: why.to_string(),
+    });
+    (ObserveCall { parts, ..call.clone() }, refused)
 }
 
 /// `observe`'s answer.
@@ -700,6 +758,12 @@ by the time a sequence takes. A host waits at most `TAKEOVER_ASK_MS` for the
 person to answer a takeover's ask, so a client waits that much longer for a
 sequence that asks for one.
 
+A sequence may carry `requester_name`, the name the requester gives itself for
+a person to read (`ui-interfaces` §6), such as Apollo or a person's driver.
+It rides the call, because the session's opening is the operation wire's and
+carries nothing of an interface's. It is a label: no check reads it, so a
+sequence refused or let through without it is refused or let through with it.
+
 <a name="chunk-input"></a><sub>[`src/input.rs`](../../crates/x0k-ui-protocol/src/input.rs) · `#input`</sub>
 
 ```rust {#input file="src/input.rs"}
@@ -787,6 +851,11 @@ pub struct Perform {
     /// window from the sequence's first event to its answer.
     #[serde(default)]
     pub takeover: bool,
+    /// The name the requester gives itself for a person to read, such as
+    /// `Apollo` (`ui-interfaces` §6). A label only: the requester is the one
+    /// the connection names, and no check reads this.
+    #[serde(default)]
+    pub requester_name: Option<String>,
 }
 
 impl Perform {
@@ -907,8 +976,11 @@ pub fn check_perform(
     Ok(resolved)
 }
 
+/// The source kinds the model has.
+pub const SOURCE_KINDS: &[&str] = &["mouse", "pen", "touch", "key", "wheel"];
+
 fn check_kind(kind: &str) -> Result<(), Refused> {
-    if matches!(kind, "mouse" | "pen" | "touch" | "key" | "wheel") {
+    if SOURCE_KINDS.contains(&kind) {
         return Ok(());
     }
     Err(Refused::new(RefusalCode::UnknownSource, kind, format!("no input source is a {kind}")))
@@ -992,8 +1064,10 @@ itself. An app whose platform reports the state after a key's own change, as
 AppKit's `flagsChanged` does, adds or removes that key's modifier itself.
 
 Which source kinds an app can deliver is the app's to say. `undeliverable`
-finds the first source of a kind an app does not deliver, so the app refuses
-the sequence before any of it runs.
+finds the first source of a kind an app does not deliver, and `check_delivers`
+refuses the sequence for it as `undeliverable_source`, naming the kind, before
+any of it runs. It runs after `check_perform`, so a kind the model does not
+have is still `unknown_source`.
 
 <a name="chunk-input-2"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#input` · continues</sub>
 
@@ -1100,6 +1174,15 @@ impl std::error::Error for TickFault {}
 /// whole sequence before any of it runs.
 pub fn undeliverable<'a>(perform: &'a Perform, delivers: &[&str]) -> Option<&'a Source> {
     perform.sources.iter().find(|source| !delivers.contains(&source.kind.as_str()))
+}
+
+/// Whether a host that delivers the source kinds `delivers` can deliver all of
+/// `perform` (§10).
+pub fn check_delivers(perform: &Perform, delivers: &[&str]) -> Result<(), Refused> {
+    let Some(source) = undeliverable(perform, delivers) else { return Ok(()) };
+    let kind = &source.kind;
+    let why = format!("the app's host cannot deliver {kind} input, which source {} is", source.id);
+    Err(Refused::new(RefusalCode::UndeliverableSource, kind, why))
 }
 ```
 
@@ -1580,7 +1663,10 @@ use crate::{Refused, RefusalCode};
 
 A handle names one fixture while it stands. `release` of a handle that does not
 stand is answered as such and not refused, because releasing twice leaves the app
-where releasing once does.
+where releasing once does. The app may end a fixture itself, for a reason it
+gives, such as an approval that arrives for a person; `release` of that handle
+then answers `ended` with the reason, so the driver learns why the fixture went
+and not only that it is gone.
 
 <a name="chunk-fixture-values"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#fixture-values`</sub>
 
@@ -1636,6 +1722,9 @@ pub enum ReleaseAnswer {
     },
     /// No fixture stands as `handle`.
     NotStanding { handle: String },
+    /// The app ended the fixture `handle` itself, for `reason`, and shows its
+    /// live state (`ui-interfaces` §4).
+    Ended { handle: String, reason: String },
 }
 ```
 
@@ -2244,7 +2333,7 @@ mod tests {
 ## What a host draws of input
 
 Every host that draws input draws the same things (`ui-control-channel` §10):
-a pointer per source, labelled with the requester that sent it, a ring at each
+a pointer per source, labelled with the name of the requester that sent it, a ring at each
 press, and the keys a requester types, each fading after its time. So the
 model of what is drawn lives here once, as plain data with no window, and each
 host keeps only its own painting: the shell's widget
@@ -2627,6 +2716,13 @@ impl InputLook {
     /// What `requester`'s label says: the name an exact key gives, else the
     /// longest prefix key's, else the requester as it is.
     pub fn name<'a>(&'a self, requester: &'a str) -> &'a str {
+        self.name_given(requester, None)
+    }
+
+    /// What `requester`'s label says when its sequence names it `given`
+    /// (`Perform::requester_name`): the look's own name for the requester
+    /// first, then `given`, then the requester as it is.
+    pub fn name_given<'a>(&'a self, requester: &'a str, given: Option<&'a str>) -> &'a str {
         if let Some(name) = self.names.get(requester) {
             return name;
         }
@@ -2634,7 +2730,8 @@ impl InputLook {
             let prefix = key.strip_suffix('*')?;
             requester.starts_with(prefix).then_some((prefix.len(), name.as_str()))
         });
-        prefixed.max_by_key(|(len, _)| *len).map_or(requester, |(_, name)| name)
+        let named = prefixed.max_by_key(|(len, _)| *len).map(|(_, name)| name);
+        named.or(given.filter(|given| !given.is_empty())).unwrap_or(requester)
     }
 }
 ```
@@ -2647,8 +2744,10 @@ yes, one ask at a time; the exit key refuses or ends it; one requester's end
 leaves another's takeover; and a held takeover is drawn without being a mark
 that fades. Two requesters drawn at once hold two colours, and a requester
 keeps its colour until nothing of its is drawn. A look names a requester by
-its exact key first and its longest prefix next, a look that declares nothing
-is the default one, and a palette picks by index round its length.
+its exact key first and its longest prefix next, then by the name its sequence
+gives (`requester_name`), so a person's own naming outranks what a driver calls
+itself; a look that declares nothing is the default one, and a palette picks
+by index round its length.
 
 <a name="chunk-presentation-model-6"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#presentation-model` · continues</sub>
 
@@ -2762,6 +2861,16 @@ mod tests {
         assert_eq!(look.name("uid 501 pid 9"), "Ana's helper");
         assert_eq!(look.name("uid 501 pid 3"), "an agent");
         assert_eq!(look.name("uid 502 pid 1"), "uid 502 pid 1");
+    }
+
+    #[test]
+    fn a_look_names_a_requester_before_the_name_it_gives_itself() {
+        let mut look = InputLook::default();
+        look.names.insert("uid 501 pid 7*".into(), "Apollo".into());
+        assert_eq!(look.name_given("uid 501 pid 77", Some("Ana")), "Apollo");
+        assert_eq!(look.name_given("uid 502 pid 1", Some("Ana's driver")), "Ana's driver");
+        assert_eq!(look.name_given("uid 502 pid 1", Some("")), "uid 502 pid 1");
+        assert_eq!(look.name_given("uid 502 pid 1", None), "uid 502 pid 1");
     }
 
     #[test]
@@ -3294,7 +3403,8 @@ fn a_value_fits_the_shape_its_operation_declares() {
     let call = serde_json::to_value(ReleaseCall { handle: "x1".to_string() }).expect("JSON");
     assert!(fits(&release.argument, &call, Use::Argument));
     let gone = ReleaseAnswer::NotStanding { handle: "x1".to_string() };
-    for answer in [ReleaseAnswer::Released { frame: None }, gone] {
+    let ended = ReleaseAnswer::Ended { handle: "x1".to_string(), reason: "an approval arrived".to_string() };
+    for answer in [ReleaseAnswer::Released { frame: None }, gone, ended] {
         let answer = serde_json::to_value(answer).expect("JSON");
         assert!(fits(&release.answer, &answer, Use::Answer), "{answer}");
     }
@@ -3342,17 +3452,18 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 use x0k_datum::Datum;
 use x0k_ui_protocol::act::{check_invoke, Grant, Invoke};
-use x0k_ui_protocol::fixture::{check_present, merge_patch, PresentCall};
+use x0k_ui_protocol::fixture::{check_present, merge_patch, PresentCall, ReleaseAnswer};
 use x0k_ui_protocol::history::{
     check_history, check_history_offer, check_navigate, check_while_shown, History, HistoryCall,
     NavigateCall, Shown,
 };
-use x0k_ui_protocol::input::{check_perform, HeldFrame, Perform};
+use x0k_ui_protocol::input::{check_delivers, check_perform, HeldFrame, Perform};
 use x0k_ui_protocol::offer::SideEffect;
-use x0k_ui_protocol::observe::{check_observation, Observation, ObserveCall, StatePart};
+use x0k_ui_protocol::observe::{check_observation, while_cannot_paint, Observation, ObserveCall, StatePart};
 use x0k_ui_protocol::offer::Offer;
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose};
 use x0k_ui_protocol::shapes::operation_class;
+use x0k_ui_protocol::Refused;
 
 /// Whether `answer` holds everything `expect` names.
 fn holds(expect: &Value, answer: &Value) -> bool {
@@ -3415,6 +3526,30 @@ fn run(check: &str, input: &Value) -> Value {
                 Err(refused) => json!({"refused": refused}),
             }
         }
+        "input.delivers" => {
+            let offer: Offer = field(input, "offer");
+            let frames: Vec<HeldFrame> = field(input, "frames");
+            let perform: Perform = field(input, "perform");
+            let delivers: Vec<String> = field(input, "delivers");
+            let delivers: Vec<&str> = delivers.iter().map(String::as_str).collect();
+            match check_perform(&offer, &frames, &perform).and_then(|_| check_delivers(&perform, &delivers)) {
+                Ok(()) => json!({"delivered": true}),
+                Err(refused) => json!({"refused": refused}),
+            }
+        }
+        "observe.while_cannot_paint" => {
+            let call: ObserveCall = field(input, "call");
+            let (asked, refused) = while_cannot_paint(&call, "the window is minimised");
+            json!({"asks": asked.parts, "refused": refused})
+        }
+        "refusal.read" => match serde_json::from_value::<Refused>(input["refused"].clone()) {
+            Ok(refused) => json!({"reads": true, "refused": refused}),
+            Err(_) => json!({"reads": false}),
+        },
+        "fixture.release_read" => match serde_json::from_value::<ReleaseAnswer>(input["answer"].clone()) {
+            Ok(answer) => json!({"reads": true, "answer": answer}),
+            Err(_) => json!({"reads": false}),
+        },
         "history.fit" => {
             let call: HistoryCall = field(input, "call");
             let history: History = field(input, "history");

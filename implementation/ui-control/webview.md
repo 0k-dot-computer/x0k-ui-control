@@ -150,6 +150,30 @@ tried again, up to three times. After that, `capture` is refused as
 last read are answered. A host whose capture fails refuses `capture` with the
 platform's reason.
 
+**A hidden page.** A page whose window does not present gets no rendering
+updates: a minimised or unmapped window, a tab behind another, and on macOS a
+window WebKit counts as occluded. Its `document.visibilityState` reads
+`hidden`. What holds now:
+
+- no wait of the library's on a rendering update lasts past a second, and a
+  page that is or becomes hidden ends every wait at once with its reason:
+  the hold, the frame after an action, a `present` or a `release`, and the
+  settle after input (`x0k:implementation/ui-control/page-hold`, "When the
+  page cannot paint");
+- a hold that could not paint is not captured: `capture` is refused as
+  `cannot_paint` with the reason, and the layout and the state it read are
+  answered;
+- the page says why it cannot paint, `cannotPaint()`, without waiting, and a
+  host asks it, or its window's own state, before each call: while it cannot,
+  an observation's capture, an action and input are refused as `cannot_paint`
+  before anything runs (`ui-control-channel` §8 to §10), measured within 40 ms
+  in WebKitGTK, Chromium and the Tauri plugin on Linux, where before each ran
+  out the plugin's 5 s wait;
+- a host that keeps a covered window painting answers as usual. The Tauri
+  plugin turns WebKit's two switches for that on macOS while a driver is
+  connected (`x0k:implementation/ui-control/tauri-plugin`, "Keeping a covered
+  window painting"); that it works there is not yet measured.
+
 **Checked by:** a probe page in the library's tests, run in every host. The page
 paints its own counter into a pixel patch and moves one element by script and
 one by a CSS animation. The test holds that the painted counter equals the held
@@ -464,8 +488,11 @@ hold the library's host by construction.
 **State.** `read` answers the presentable state. Its head is what the page gives
 with `head()`, or else a digest of the state's canonical encoding. A page that
 takes state fixtures adds `present(state)` and `release()` hooks, and its offer
-says so (`x0k:architecture/ui-interfaces` §4). The first library leaves
-`ui/history` out, and its offer says `live`.
+says so (`x0k:architecture/ui-interfaces` §4). The library keeps the fixture's
+handle and the live state as it stood, and a host that makes the fixture checks,
+the Tauri plugin's endpoint, offers `ui/history` with fixtures for such a page
+(`x0k:implementation/ui-control/page-answer`, "A state fixture"). A host in
+JavaScript makes none, so it leaves `ui/history` out and its offer says `live`.
 
 **The frame after.** An `invoke` waits for the action's promise, then for one
 rendering update, and answers the epoch then. That is the first page state

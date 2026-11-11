@@ -260,6 +260,9 @@ the app's effects do while that state is shown.
   policy for `vary` answers each effect that leaves the app's own state;
 - no effect under a fixture is a `non_idempotent` effect against a real
   target (`graded-introspection` §9, fourth floor);
+- the app may end a fixture that stands itself, for a reason it gives, and
+  then shows its live state; the session that presented it is told why
+  before any call it makes under that fixture runs against the live state;
 - when the session that presented a fixture ends, the app releases it.
 
 **On failure:** each of these is refused by name before the app shows
@@ -272,10 +275,30 @@ anything:
   head;
 - `present` to an app whose offer does not say it takes state fixtures.
 
+The app may decline a `present`, and while a fixture stands an `invoke` or a
+`perform`, for now and with the reason it gives, such as an approval that
+waits for a person. It refuses the call as `declined` before it shows or runs
+anything, because the state fits and the app's own condition refuses it.
 `release` of a handle that does not stand answers that it does not stand.
+
+The app may also end a fixture that stands, for the reason it gives, such as
+an approval that arrives for a person, since a fixture never stands over an
+approval. It shows its live state again, as after a `release`. The session
+that presented the fixture learns this on its next call. An observation names
+`live` as its shown state (§3). The session's next `invoke` or `perform` is
+refused as `fixture_ended` before anything runs, naming the handle and the
+app's reason, and its later calls run against the live state. A `release` of
+that handle answers that the app ended it, with the reason, not that it does
+not stand. While the fixture stood, the replay policy's `vary` column
+answered the driver's effects; once the app ends it, nothing answers them
+that way, so the first call the driver made expecting it is refused rather
+than performed against the live state. A session that ends after the app
+ended its fixture has nothing left to release.
 **Checked by:** the `ui/history` vectors of the conformance suite (intent
 1f4dc28c), among them that presenting and releasing a fixture leaves the live
-state head where it was.
+state head where it was, and that after the app ends a fixture its
+observation shows `live`, the presenter's next action is refused as
+`fixture_ended` with the app's reason, and its `release` names that reason.
 
 - **`present`** takes either a full state or a JSON Merge Patch over the live
   state. It also takes the shape fingerprint the driver read with the state
@@ -360,6 +383,13 @@ the frames `ui-control-channel` §7 decides.
   requester from the peer's credentials;
 - a call the daemon forwards names its requester in `on_behalf_of`, honoured
   only on the daemon's connection (`operation-surface` §1);
+- a `perform` may carry `requester_name`, the name the requester gives
+  itself for a person to read, such as Apollo or a person's driver. The
+  client sets it on each call that carries it. It is a label and never
+  authority: the requester stays the one the peer's credentials or
+  `on_behalf_of` name, and the grant, a takeover's ask of the person and
+  every tier read that requester, never the name. The app may show the name,
+  as its host's drawing of input does (`ui-control-channel` §10);
 
 <!-- inferred: the endpoint does not yet read peer credentials, and x0k's shell
 grants every class until connections carry their own grants; the requester
@@ -374,7 +404,8 @@ are kept (`ui-control-channel` §8). The driver then asks for a region or a
 smaller scale.
 **Checked by:** the conformance program's oversized-frame case, run on the
 app's socket; the suite's trace claim, which a witness of the app's spans
-decides.
+decides; the `ui/input` vectors, among them that a `requester_name` changes
+nothing a check refuses or lets through.
 
 ### 7. Edges answer by reach, and fall back call by call
 

@@ -1,0 +1,58 @@
+{
+  "clause": "ui-interfaces §4",
+  "check": "fixture.release_read",
+  "about": "A release answer is released, not_standing or ended. A fixture the app ended itself is answered ended, naming the handle and the app's reason, apart from a handle that never stood. The answer is {reads: true, answer} or {reads: false}.",
+  "vectors": [
+    {
+      "name": "a fixture the app ended answers ended, with the handle and the app's reason",
+      "input": {
+        "answer": {
+          "ended": {
+            "handle": "fixture-3",
+            "reason": "an approval arrived for a person"
+          }
+        }
+      },
+      "expect": {
+        "reads": true,
+        "answer": {
+          "ended": {
+            "handle": "fixture-3",
+            "reason": "an approval arrived for a person"
+          }
+        }
+      }
+    },
+    {
+      "name": "an ended answer with no reason does not read",
+      "input": {
+        "answer": {
+          "ended": {
+            "handle": "fixture-3"
+          }
+        }
+      },
+      "expect": {
+        "reads": false
+      }
+    },
+    {
+      "name": "a handle that never stood answers not_standing",
+      "input": {
+        "answer": {
+          "not_standing": {
+            "handle": "fixture-9"
+          }
+        }
+      },
+      "expect": {
+        "reads": true,
+        "answer": {
+          "not_standing": {
+            "handle": "fixture-9"
+          }
+        }
+      }
+    }
+  ]
+}

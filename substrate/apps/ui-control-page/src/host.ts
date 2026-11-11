@@ -28,6 +28,7 @@ export async function loadChecks(module: Uint8Array): Promise<Checks> {
 export interface PageCalls {
   declared(): Promise<Declared>;
   run(name: string, args: unknown): Promise<Ran>;
+  cannotPaint(): Promise<string | null>;
 }
 
 /** The endpoint's operations a host answers from what the page declares. */
@@ -36,7 +37,7 @@ const OFFER = 'ui/observe.offer', INVOKE = 'ui/act.invoke';
 /** `held` with the state it read made the protocol's state part. */
 export function pinned<C>(checks: Checks, held: HeldCapture<PageRead, C>): HeldCapture<PinnedRead, C> {
   const state = held.read.state && checks.call({ fn: 'state', ...held.read.state });
-  return { ...held, read: { layout: held.read.layout, state } };
+  return { ...held, read: { layout: held.read.layout, shown: held.read.shown, state } };
 }
 
 /** The answer to `operation` with `argument` other than an observation, for a
@@ -47,5 +48,7 @@ export async function hostAnswer(checks: Checks, page: PageCalls, operation: str
   const checked = checks.call({ fn: 'check', operation, argument, offer });
   if ('answer' in checked) return checked.answer;
   if (operation !== INVOKE) throw new Error(`the checks let ${operation} through to a page that does not answer it`);
+  const unpainted = await page.cannotPaint();
+  if (unpainted !== null) return { refused: { code: 'cannot_paint', subject: checked.run.name, why: unpainted } };
   return page.run(checked.run.name, (argument as { args?: unknown }).args ?? null);
 }

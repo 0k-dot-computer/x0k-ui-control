@@ -1,6 +1,6 @@
 {
   "source": "implementation/sync/operation-session.md",
-  "source_hash": "ff781397d5aa5f8d",
+  "source_hash": "836cf634af57d255",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -13,11 +13,11 @@
         },
         {
           "path": "crates/x0k-operation-session/src/session.rs",
-          "hash": "d200dfa4e84f84b1"
+          "hash": "8d82c6ce233193ff"
         },
         {
           "path": "crates/x0k-operation-session/Cargo.toml",
-          "hash": "50f50e9be8757e8d"
+          "hash": "cf4ca12e73215fef"
         },
         {
           "path": "crates/x0k-operation-session/src/lib.rs",

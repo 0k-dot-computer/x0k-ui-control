@@ -30,7 +30,7 @@ pub(crate) struct Tick {
 }
 
 /// The source kinds AppKit delivers into a WKWebView: it takes no touch or pen.
-const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
+pub(crate) const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
 
 /// `perform` as ticks of events in view points, or why none of it may run.
 pub(crate) fn appkit_ticks(perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<Vec<Tick>, PageError> {

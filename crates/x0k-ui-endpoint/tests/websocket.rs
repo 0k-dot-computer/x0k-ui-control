@@ -79,6 +79,7 @@ impl UiApp for Browserish {
         let whole = call.scale.is_none() && call.region.is_none();
         let refused = (wants(Part::Capture) && !whole).then(|| x0k_ui_protocol::observe::PartRefused {
             part: Part::Capture,
+            code: None,
             why: "whole frames only".to_string(),
         });
         let capture = Capture { png: png(), width: WIDTH, height: HEIGHT, scale_factor: 1.0, presented: false };

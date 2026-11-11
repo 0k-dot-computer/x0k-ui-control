@@ -10,6 +10,8 @@ to the unix socket <socket> (a leading @ names an abstract one) and sends
 line it sends an answer, with the request's id:
   {"id", "op": "eval", "body"}  the body of an async function; its value, a string
   {"id", "op": "snap"}          the visible region: width, height, stride, BGRA bytes and a PNG, in base64
+  {"id", "op": "hide"}          unmap the window, so the page is hidden
+  {"id", "op": "show"}          map it again
 The test sends one request at a time and waits for its answer.
 """
 import base64
@@ -83,6 +85,12 @@ def on_line(channel, condition):
         evaluate(request["id"], request["body"])
     elif request["op"] == "snap":
         snap(request["id"])
+    elif request["op"] == "hide":
+        window.hide()
+        answer({"id": request["id"]})
+    elif request["op"] == "show":
+        window.show_all()
+        answer({"id": request["id"]})
     else:
         answer({"id": request["id"], "error": "unknown op " + request["op"]})
     return True

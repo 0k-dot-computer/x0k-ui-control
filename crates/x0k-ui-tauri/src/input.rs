@@ -33,7 +33,7 @@ pub(crate) struct Tick {
 const PIXELS_PER_LINE: f64 = 40.0;
 
 /// The source kinds GDK delivers into WebKitGTK.
-const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
+pub(crate) const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
 
 /// `perform` as ticks of events in the widget's units, or why none of it may run.
 pub(crate) fn gdk_ticks(perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<Vec<Tick>, PageError> {

@@ -43,7 +43,7 @@ reads the built file.
 ```toml {#wasm-manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-protocol-wasm"
-version = "0.1.0"
+version = "0.2.0"
 edition = { workspace = true }
 license = "MIT"
 description = "x0k-ui-protocol's page module as a WebAssembly module: a page's offer, its state part and the checks, for a host in JavaScript of a web page that answers the UI-control protocol."
@@ -60,7 +60,7 @@ crate-type = ["cdylib", "rlib"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.1.0" }
+x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.2.0" }
 ```
 
 A request names its function in `fn`, and each is one of the page module's:

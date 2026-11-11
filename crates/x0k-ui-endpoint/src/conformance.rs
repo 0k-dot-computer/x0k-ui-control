@@ -16,7 +16,7 @@ use x0k_ui_protocol::history::{
     check_history, check_history_offer, Destination, History, HistoryAnswer, HistoryCall, NavigateAnswer,
     NavigateCall, Shown,
 };
-use x0k_ui_protocol::input::{HeldFrame, Pace, Perform, Source, Step, Target, WATCHABLE_PRESS_MS};
+use x0k_ui_protocol::input::{HeldFrame, Pace, Perform, Source, Step, Target, SOURCE_KINDS, WATCHABLE_PRESS_MS};
 use x0k_ui_protocol::observe::{check_observation, LayoutNode, Observation, ObserveCall, Part, Region, StatePart};
 use x0k_ui_protocol::offer::{Offer, SideEffect, UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE};
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose, ReplayDisposition};
@@ -45,6 +45,11 @@ const NO_SUCH_SHAPE: &str = "ui-conformance.no-such-shape";
 const NO_SUCH_HEAD: &str = "ui-conformance.no-such-head";
 /// A state no app's shape is likely to take.
 const NOT_A_STATE: &str = "ui-conformance: not a state";
+/// How soon an app whose host cannot paint its window refuses an action or input.
+pub const CANNOT_PAINT_WITHIN: std::time::Duration = std::time::Duration::from_secs(1);
+const CANNOT_PAINT_OBSERVED: &str = "while the host cannot paint the window, an observation refuses only the capture, as cannot_paint";
+const CANNOT_PAINT_ACTED: &str = "while the host cannot paint the window, an action is refused as cannot_paint within a second";
+const CANNOT_PAINT_INPUT: &str = "while the host cannot paint the window, input is refused as cannot_paint within a second";
 
 /// What became of one claim.
 #[derive(Clone, Debug, PartialEq)]
@@ -140,6 +145,18 @@ pub async fn run(client: &UiClient, options: &Options) -> Result<Report, ClientF
     suite.the_offer(&offer);
     suite.tracing(options).await;
     suite.observing(&offer).await;
+    suite.source_kinds(&offer).await;
+    if let Some(why) = suite.cannot_paint().await {
+        suite.while_cannot_paint(&offer, options).await;
+        let claim = "the app acts, takes input, goes back and shows fixtures while its host paints";
+        let why = format!("the host cannot paint the window: {why}");
+        suite.record("§8", claim, Verdict::Unreachable(why));
+        return Ok(Report { app: offer.app, cases: suite.cases });
+    }
+    for (clause, claim) in [("§8", CANNOT_PAINT_OBSERVED), ("§9", CANNOT_PAINT_ACTED), ("§10", CANNOT_PAINT_INPUT)] {
+        let why = "the host paints: its capture is not refused as cannot_paint".to_string();
+        suite.record(clause, claim, Verdict::Unreachable(why));
+    }
     if offer.answers(UI_ACT) {
         suite.acting(&offer, options).await;
     }
@@ -338,6 +355,85 @@ impl Suite<'_> {
             }
         }
         self.check("§8", claim, moved);
+    }
+
+    /// Why the app refuses its capture as one its host cannot paint, when it does.
+    async fn cannot_paint(&self) -> Option<String> {
+        let call = ObserveCall { parts: vec![Part::Capture], region: None, scale: None, frame_only: false };
+        let observation = self.client.observe(&call).await.ok()?;
+        let refused = observation.refused.into_iter().find(|refused| refused.part == Part::Capture)?;
+        (refused.code == Some(RefusalCode::CannotPaint)).then_some(refused.why)
+    }
+
+    /// The claims of an app whose host cannot paint its window (§8 to §10).
+    async fn while_cannot_paint(&mut self, offer: &Offer, options: &Options) {
+        let call = ObserveCall { parts: vec![Part::Capture, Part::Layout, Part::State], region: None, scale: None, frame_only: false };
+        let broken = match self.client.observe(&call).await {
+            Ok(observation) => cannot_paint_breaks(&call, &observation),
+            Err(fault) => Some(fault.to_string()),
+        };
+        self.check("§8", CANNOT_PAINT_OBSERVED, broken);
+
+        let reading = offer.actions.iter().filter(|action| action.side_effect == SideEffect::ReadOnly);
+        let reading = reading.map(|action| Invoke { action: action.name.clone(), args: Value::Null });
+        let invoke = reading.into_iter().chain(options.act.clone()).find(|invoke| check_invoke(offer, &every_class(), invoke).is_ok());
+        match invoke {
+            Some(invoke) if offer.answers(UI_ACT) => {
+                let started = std::time::Instant::now();
+                let answer = self.client.invoke(&invoke).await;
+                let refused = match answer {
+                    Ok(InvokeAnswer::Refused(refused)) => Ok(refused),
+                    Ok(other) => Err(Some(format!("{} was answered {other:?}", invoke.action))),
+                    Err(fault) => Err(Some(fault.to_string())),
+                };
+                self.check("§9", CANNOT_PAINT_ACTED, refused_at_once(refused, started.elapsed()));
+            }
+            _ => {
+                let why = "the app offers no action the suite may send".to_string();
+                self.record("§9", CANNOT_PAINT_ACTED, Verdict::Unreachable(why));
+            }
+        }
+
+        if !offer.answers(UI_INPUT) {
+            let why = "the offer does not name ui/input".to_string();
+            return self.record("§10", CANNOT_PAINT_INPUT, Verdict::Unreachable(why));
+        }
+        let pause = Source { id: "pointer".to_string(), kind: "mouse".to_string(), steps: vec![Step::Pause { ms: 1 }] };
+        let started = std::time::Instant::now();
+        let refused = match self.client.perform(&Perform::of(vec![pause])).await {
+            Ok(PerformAnswer::Refused(refused)) => Ok(refused),
+            Ok(other) => Err(Some(format!("the sequence was answered {other:?}"))),
+            Err(fault) => Err(Some(fault.to_string())),
+        };
+        self.check("§10", CANNOT_PAINT_INPUT, refused_at_once(refused, started.elapsed()));
+    }
+
+    /// Every kind the model has is delivered, or refused as one the host
+    /// cannot deliver, and never as one the model does not have (§10).
+    async fn source_kinds(&mut self, offer: &Offer) {
+        let claim = "a source kind the model has is delivered or refused as undeliverable_source naming it, never as unknown_source";
+        if !offer.answers(UI_INPUT) {
+            return self.record("§10", claim, Verdict::Unreachable("the offer does not name ui/input".to_string()));
+        }
+        let mut broken = None;
+        for kind in SOURCE_KINDS {
+            let pause = Source { id: "source".to_string(), kind: kind.to_string(), steps: vec![Step::Pause { ms: 1 }] };
+            broken = match self.client.perform(&Perform::of(vec![pause])).await {
+                Ok(PerformAnswer::Done { .. }) => None,
+                Ok(PerformAnswer::Refused(refused))
+                    if refused.code == RefusalCode::CannotPaint
+                        || (refused.code == RefusalCode::UndeliverableSource && refused.subject.as_deref() == Some(kind)) =>
+                {
+                    None
+                }
+                Ok(other) => Some(format!("a {kind} was answered {other:?}")),
+                Err(fault) => Some(fault.to_string()),
+            };
+            if broken.is_some() {
+                break;
+            }
+        }
+        self.check("§10", claim, broken);
     }
 
     async fn acting(&mut self, offer: &Offer, options: &Options) {
@@ -927,6 +1023,9 @@ impl Suite<'_> {
         let claim = "presenting a fixture shows it and names its frame";
         let (handle, broken) = match self.present_live(live).await {
             Ok(PresentAnswer::Presented { handle, frame }) if frame.is_some() || !presents_frames => (Some(handle), None),
+            Ok(PresentAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                return self.record(UI_INTERFACES_4, claim, declined(&refused));
+            }
             Ok(other) => (None, Some(format!("{other:?}"))),
             Err(fault) => (None, Some(fault.to_string())),
         };
@@ -942,7 +1041,9 @@ impl Suite<'_> {
             Err(fault) => Some(fault.to_string()),
         };
         self.check(UI_INTERFACES_3, "an observation names the fixture it shows", broken);
-        self.driving_under_a_fixture(offer, options, observation.ok()).await;
+        if let Some(ended) = self.driving_under_a_fixture(offer, options, observation.ok()).await {
+            return self.after_the_app_ended(&handle, &ended).await;
+        }
 
         let claim = "one fixture stands at a time: a second present replaces the first";
         let (current, broken) = match self.present_live(live).await {
@@ -981,7 +1082,9 @@ impl Suite<'_> {
 }
 
 impl Suite<'_> {
-    async fn driving_under_a_fixture(&mut self, offer: &Offer, options: &Options, observation: Option<Observation>) {
+    /// Drive the app under the suite's fixture; answers the refusal that says
+    /// the app ended it, if it did.
+    async fn driving_under_a_fixture(&mut self, offer: &Offer, options: &Options, observation: Option<Observation>) -> Option<Refused> {
         let claim = "input reaches the app while a fixture stands";
         if offer.answers(UI_INPUT) {
             let frame = observation.and_then(|observation| {
@@ -995,12 +1098,23 @@ impl Suite<'_> {
                 None => vec![Step::Pause { ms: 0 }],
             };
             let source = Source { id: "pointer".to_string(), kind: "mouse".to_string(), steps };
-            let broken = match self.client.perform(&Perform::of(vec![source])).await {
-                Ok(PerformAnswer::Done { .. }) => None,
-                Ok(other) => Some(format!("{other:?}")),
-                Err(fault) => Some(fault.to_string()),
-            };
-            self.check(UI_INTERFACES_4, claim, broken);
+            match self.client.perform(&Perform::of(vec![source])).await {
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    self.record(UI_INTERFACES_4, claim, declined(&refused));
+                }
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::FixtureEnded => {
+                    self.record(UI_INTERFACES_4, claim, ended(&refused));
+                    return Some(refused);
+                }
+                answer => {
+                    let broken = match answer {
+                        Ok(PerformAnswer::Done { .. }) => None,
+                        Ok(other) => Some(format!("{other:?}")),
+                        Err(fault) => Some(fault.to_string()),
+                    };
+                    self.check(UI_INTERFACES_4, claim, broken);
+                }
+            }
         } else {
             self.record(UI_INTERFACES_4, claim, Verdict::Unreachable("the offer does not name ui/input".to_string()));
         }
@@ -1009,19 +1123,29 @@ impl Suite<'_> {
         if check_replay_policy(offer).is_err() {
             let why = "the offer's replay policy cannot be read, so every action is refused".to_string();
             self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
-            return self.record(UI_INTERFACES_4, ACTING_UNDER_A_FIXTURE, Verdict::Unreachable(why_unreadable()));
+            self.record(UI_INTERFACES_4, ACTING_UNDER_A_FIXTURE, Verdict::Unreachable(why_unreadable()));
+            return None;
         }
         let reading = offer.actions.iter().filter(|action| action.side_effect == SideEffect::ReadOnly);
         let reading = reading.map(|action| Invoke { action: action.name.clone(), args: Value::Null });
         match reading.into_iter().find(|invoke| check_invoke(offer, &every_class(), invoke).is_ok()) {
-            Some(invoke) => {
-                let broken = match self.client.invoke(&invoke).await {
-                    Ok(InvokeAnswer::Done { .. } | InvokeAnswer::Failed { .. }) => None,
-                    Ok(other) => Some(format!("{} was answered {other:?}", invoke.action)),
-                    Err(fault) => Some(fault.to_string()),
-                };
-                self.check(UI_INTERFACES_4, claim, broken);
-            }
+            Some(invoke) => match self.client.invoke(&invoke).await {
+                Ok(InvokeAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    self.record(UI_INTERFACES_4, claim, declined(&refused));
+                }
+                Ok(InvokeAnswer::Refused(refused)) if refused.code == RefusalCode::FixtureEnded => {
+                    self.record(UI_INTERFACES_4, claim, ended(&refused));
+                    return Some(refused);
+                }
+                answer => {
+                    let broken = match answer {
+                        Ok(InvokeAnswer::Done { .. } | InvokeAnswer::Failed { .. }) => None,
+                        Ok(other) => Some(format!("{} was answered {other:?}", invoke.action)),
+                        Err(fault) => Some(fault.to_string()),
+                    };
+                    self.check(UI_INTERFACES_4, claim, broken);
+                }
+            },
             None => self.record(UI_INTERFACES_4, claim, Verdict::Unreachable("no read-only action takes no arguments".to_string())),
         }
 
@@ -1033,10 +1157,21 @@ impl Suite<'_> {
         });
         let Some((invoke, class)) = acts else {
             let why = "the caller named no action that acts above read_only".to_string();
-            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
+            self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
+            return None;
         };
         let taken = disposition(offer, Purpose::Vary, class, &invoke.action);
         let answer = self.client.invoke(invoke).await;
+        if let Ok(InvokeAnswer::Refused(refused)) = &answer {
+            if refused.code == RefusalCode::Declined {
+                self.record(UI_INTERFACES_4, claim, declined(refused));
+                return None;
+            }
+            if refused.code == RefusalCode::FixtureEnded {
+                self.record(UI_INTERFACES_4, claim, ended(refused));
+                return Some(refused.clone());
+            }
+        }
         let performed = matches!(answer, Ok(InvokeAnswer::Done { .. } | InvokeAnswer::Failed { .. }));
         let broken = match (taken.disposition, answer) {
             _ if performed && class == SideEffect::NonIdempotent => {
@@ -1054,6 +1189,27 @@ impl Suite<'_> {
             (_, Err(fault)) => Some(fault.to_string()),
         };
         self.check(UI_INTERFACES_4, claim, broken);
+        None
+    }
+
+    /// `ui-interfaces` §4: the app ended the suite's fixture `handle` itself,
+    /// and `ended` is the refusal that said so. The rest of the trip needs a
+    /// fixture that stands, so it is unreachable with the app's reason.
+    async fn after_the_app_ended(&mut self, handle: &str, ended: &Refused) {
+        let claim = "the call after the app ended its fixture is refused as fixture_ended, naming the fixture";
+        let broken = (ended.subject.as_deref() != Some(handle)).then(|| format!("it names {:?}", ended.subject));
+        self.check(UI_INTERFACES_4, claim, broken);
+        let broken = self.shows(&Shown::Live).await;
+        self.check(UI_INTERFACES_4, "an app that ends a fixture itself shows its live state", broken);
+        let claim = "releasing a fixture the app ended answers that it ended, with the app's reason";
+        let broken = match self.client.release(&ReleaseCall { handle: handle.to_string() }).await {
+            Ok(ReleaseAnswer::Ended { handle: named, reason }) if named == handle && reason == ended.why => None,
+            Ok(other) => Some(format!("{other:?}")),
+            Err(fault) => Some(fault.to_string()),
+        };
+        self.check(UI_INTERFACES_4, claim, broken);
+        let why = format!("the app ended the fixture: {}", ended.why);
+        self.record(UI_INTERFACES_4, "replacing and releasing a fixture", Verdict::Unreachable(why));
     }
 
     /// Presenting and releasing leaves the live head where it was.
@@ -1064,6 +1220,9 @@ impl Suite<'_> {
             let before = self.client.offer().await.ok().and_then(|offer| offer.state_head);
             let handle = match self.present_live(live).await {
                 Ok(PresentAnswer::Presented { handle, .. }) => handle,
+                Ok(PresentAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    return self.record(UI_INTERFACES_4, claim, declined(&refused));
+                }
                 other => {
                     moved = Some(format!("the fixture was not presented: {other:?}"));
                     continue;
@@ -1082,6 +1241,17 @@ impl Suite<'_> {
 
 const ACTING_UNDER_A_FIXTURE: &str =
     "an action above read_only takes the disposition the replay policy gives it, and a non_idempotent one is never performed";
+
+/// A claim whose call the app declines for now: unreachable, with its reason.
+fn declined(refused: &Refused) -> Verdict {
+    Verdict::Unreachable(format!("the app declines for now: {}", refused.why))
+}
+
+/// A claim whose call meets a fixture the app ended itself: unreachable, with
+/// the app's reason.
+fn ended(refused: &Refused) -> Verdict {
+    Verdict::Unreachable(format!("the app ended the fixture: {}", refused.why))
+}
 
 fn why_unreadable() -> String {
     "the offer's replay policy cannot be read, so every action is refused".to_string()
@@ -1184,6 +1354,31 @@ fn every_class() -> Grant {
 
 /// How `observation` breaks §8 as an answer to `call`, if it does: the observe
 /// vectors' check, and a capture that is a PNG of the size it says.
+/// How an observation from an app whose host cannot paint its window breaks §8, if it does.
+fn cannot_paint_breaks(call: &ObserveCall, observation: &Observation) -> Option<String> {
+    if let Some(broken) = observation_breaks(call, observation) {
+        return Some(broken);
+    }
+    let refused_as = |part| observation.refused.iter().find(|refused| refused.part == part).and_then(|refused| refused.code);
+    if refused_as(Part::Capture) != Some(RefusalCode::CannotPaint) {
+        return Some("the capture is not refused as cannot_paint".to_string());
+    }
+    if let Some(part) = [Part::Layout, Part::State].into_iter().find(|part| refused_as(*part) == Some(RefusalCode::CannotPaint)) {
+        return Some(format!("{part:?} is refused as cannot_paint"));
+    }
+    observation.layout.is_none().then(|| "the layout is not answered".to_string())
+}
+
+/// How a refusal answered after `took` is not `cannot_paint` within the bound, if it is not.
+fn refused_at_once(refused: Result<Refused, Option<String>>, took: std::time::Duration) -> Option<String> {
+    match refused {
+        Ok(refused) if refused.code != RefusalCode::CannotPaint => Some(format!("refused as {:?}: {}", refused.code, refused.why)),
+        Ok(_) if took > CANNOT_PAINT_WITHIN => Some(format!("refused after {} ms", took.as_millis())),
+        Ok(_) => None,
+        Err(broken) => broken,
+    }
+}
+
 fn observation_breaks(call: &ObserveCall, observation: &Observation) -> Option<String> {
     if let Err(fault) = check_observation(call, observation) {
         return Some(format!("{fault:?}"));

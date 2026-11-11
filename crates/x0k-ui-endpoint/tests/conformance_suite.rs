@@ -14,7 +14,7 @@ use x0k_ui_endpoint::conformance::{
     a_session_end_releases_its_fixture, a_session_end_returns_to_live, an_oversized_frame, run, Options, Report,
     Verdict,
 };
-use x0k_ui_endpoint::server::{listen, serve_connection, Endpoint, UiApp};
+use x0k_ui_endpoint::server::{listen, serve_connection, Declinable, Endpoint, UiApp};
 use x0k_ui_endpoint::wire::to_wire;
 use x0k_ui_endpoint::{
     shapes, InvokeAnswer, PerformAnswer, PresentAnswer, ReleaseAnswer, INVOKE, OFFER, PERFORM, PRESENT, RELEASE,
@@ -25,13 +25,14 @@ use x0k_ui_protocol::act::{Grant, Invoke, Outcome};
 use x0k_ui_protocol::history::{
     Destination, Grade, History, HistoryCall, HistoryOffer, NavigateAnswer, Position, Shown,
 };
-use x0k_ui_protocol::input::{HeldFrame, InputOffer, Pace, Perform, Resolved, Step, WATCHABLE_PRESS_MS};
+use x0k_ui_protocol::input::{HeldFrame, InputOffer, Pace, Perform, Resolved, Step, SOURCE_KINDS, WATCHABLE_PRESS_MS};
 use x0k_ui_protocol::observe::{
     Bounds, Capture, LayoutNode, Observation, ObserveCall, Part, StatePart,
 };
 use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY};
 use x0k_ui_protocol::replay::{Covers, PolicyEntry, ReplayDisposition};
 use x0k_ui_protocol::shapes::{interface, interfaces, shape_pin};
+use x0k_ui_protocol::{Refused, RefusalCode};
 
 /// One promise an app breaks.
 #[derive(Clone, Copy, PartialEq)]
@@ -79,12 +80,36 @@ enum Flaw {
     HastyPace,
 }
 
+/// A condition `Faithful` keeps its promises under.
+#[derive(Clone, Copy, PartialEq)]
+enum Condition {
+    /// Its window shows.
+    Shown,
+    /// Its window is minimised, and its host cannot paint it.
+    CannotPaint,
+    /// Its host delivers no touch and no pen.
+    NoTouch,
+    /// It declines every fixture while an approval waits.
+    DeclinesFixtures,
+    /// It takes a fixture, and declines actions and input under it.
+    DeclinesUnderFixture,
+    /// It ends a fixture itself once it has been observed, as when an
+    /// approval arrives for a person.
+    EndsFixture,
+}
+
+/// Why `Faithful` declines.
+const APPROVAL: &str = "an approval waits for a person";
+/// Why `Faithful` ends a fixture itself.
+const ARRIVED: &str = "an approval arrived for a person";
+
 /// The positions `Faithful` holds, of the six it has had.
 const OLDEST: u64 = 3;
 const NEWEST: u64 = 6;
 
 struct Faithful {
     flaw: Flaw,
+    condition: Condition,
     head: AtomicU64,
     observed: AtomicU64,
     newest: AtomicU64,
@@ -94,6 +119,8 @@ struct Faithful {
     fixture: Mutex<Value>,
     /// Handles still standing beside the shown one, under `TwoFixtures`.
     beside: Mutex<Vec<String>>,
+    /// The fixture it ended itself, under `EndsFixture`.
+    ended: Mutex<Option<String>>,
 }
 
 /// `Faithful`'s state shape: a closed record of one count.
@@ -105,6 +132,7 @@ impl Faithful {
     fn new(flaw: Flaw) -> Self {
         Faithful {
             flaw,
+            condition: Condition::Shown,
             head: AtomicU64::new(1),
             observed: AtomicU64::new(0),
             newest: AtomicU64::new(NEWEST),
@@ -112,7 +140,12 @@ impl Faithful {
             presented: AtomicU64::new(0),
             fixture: Mutex::new(Value::Null),
             beside: Mutex::new(Vec::new()),
+            ended: Mutex::new(None),
         }
+    }
+
+    fn under(condition: Condition) -> Self {
+        Faithful { condition, ..Faithful::new(Flaw::None) }
     }
 
     fn live(&self) -> StatePart {
@@ -230,7 +263,7 @@ impl UiApp for Faithful {
             _ => self.live(),
         };
         let unasked = self.flaw == Flaw::UnaskedPart;
-        Observation {
+        let observation = Observation {
             frame: Some("live".to_string()),
             capture: capture.then_some(answer),
             layout: (wants(Part::Layout) || unasked).then(|| renamed(layout(wide))),
@@ -238,6 +271,7 @@ impl UiApp for Faithful {
             refused: (wants(Part::Capture) && !whole_frame)
                 .then(|| x0k_ui_protocol::observe::PartRefused {
                     part: Part::Capture,
+                    code: None,
                     why: "whole frames only".to_string(),
                 })
                 .into_iter()
@@ -247,7 +281,12 @@ impl UiApp for Faithful {
                 (Flaw::FixtureUnnamed, Shown::Fixture { .. }) => Some(Shown::Live),
                 (_, shown) => Some(shown),
             },
+        };
+        if let (Condition::EndsFixture, Shown::Fixture { handle }) = (self.condition, self.showing()) {
+            *self.shown.lock().expect("the lock") = Shown::Live;
+            *self.ended.lock().expect("the lock") = Some(handle);
         }
+        observation
     }
 
     async fn invoke(&self, _action: &Action, args: Value) -> Outcome {
@@ -319,6 +358,9 @@ impl UiApp for Faithful {
     }
 
     async fn present(&self, state: Value) -> PresentAnswer {
+        if self.condition == Condition::DeclinesFixtures {
+            return PresentAnswer::Refused(Refused::new(RefusalCode::Declined, UI_HISTORY, APPROVAL));
+        }
         let handle = format!("x{}", self.presented.fetch_add(1, Ordering::Relaxed) + 1);
         if self.flaw == Flaw::FixtureMovesLive {
             self.head.fetch_add(1, Ordering::Relaxed);
@@ -346,6 +388,26 @@ impl UiApp for Faithful {
         }
         ReleaseAnswer::Released { frame: Some("live".to_string()) }
     }
+
+    async fn cannot_paint(&self) -> Option<String> {
+        (self.condition == Condition::CannotPaint).then(|| "the window is minimised".to_string())
+    }
+
+    fn delivers(&self) -> &[&str] {
+        match self.condition {
+            Condition::NoTouch => &["mouse", "key", "wheel"],
+            _ => SOURCE_KINDS,
+        }
+    }
+
+    async fn declines(&self, _call: Declinable<'_>) -> Option<String> {
+        (self.condition == Condition::DeclinesUnderFixture).then(|| APPROVAL.to_string())
+    }
+
+    async fn fixture_ended(&self, handle: &str) -> Option<String> {
+        let ended = self.ended.lock().expect("the lock");
+        (ended.as_deref() == Some(handle)).then(|| ARRIVED.to_string())
+    }
 }
 
 fn acting() -> Options {
@@ -354,9 +416,13 @@ fn acting() -> Options {
 }
 
 async fn report_of(flaw: Flaw) -> Report {
+    report_of_app(Faithful::new(flaw)).await
+}
+
+async fn report_of_app(app: Faithful) -> Report {
     let (ours, theirs) = tokio::io::duplex(1 << 20);
     let grant = Grant { classes: vec![SideEffect::ReadOnly, SideEffect::NonIdempotent] };
-    tokio::spawn(serve_connection(theirs, Arc::new(Endpoint::new(Faithful::new(flaw), grant))));
+    tokio::spawn(serve_connection(theirs, Arc::new(Endpoint::new(app, grant))));
     let client = UiClient::open(ours).await.expect("a session");
     run(&client, &acting()).await.expect("a report")
 }
@@ -402,9 +468,85 @@ async fn a_faithful_app_breaks_nothing_and_runs_every_refusing_vector() {
         "releasing a fixture shows the live state",
         "releasing a fixture that does not stand answers that it does not stand",
         "a fixture never changes the live state: presenting and releasing leaves its head where it was",
+        SOURCE_KINDS_CLAIM,
     ] {
         assert!(held(claim), "{claim}: {report:?}");
     }
+    for claim in CANNOT_PAINT_CLAIMS {
+        assert!(verdict_of(&report, claim).is_some_and(|verdict| matches!(verdict, Verdict::Unreachable(_))), "{claim}: {report:?}");
+    }
+}
+
+const FIXTURE_ENDED_CLAIMS: [&str; 3] = [
+    "the call after the app ended its fixture is refused as fixture_ended, naming the fixture",
+    "an app that ends a fixture itself shows its live state",
+    "releasing a fixture the app ended answers that it ended, with the app's reason",
+];
+
+const SOURCE_KINDS_CLAIM: &str =
+    "a source kind the model has is delivered or refused as undeliverable_source naming it, never as unknown_source";
+const CANNOT_PAINT_CLAIMS: [&str; 3] = [
+    "while the host cannot paint the window, an observation refuses only the capture, as cannot_paint",
+    "while the host cannot paint the window, an action is refused as cannot_paint within a second",
+    "while the host cannot paint the window, input is refused as cannot_paint within a second",
+];
+
+fn verdict_of<'r>(report: &'r Report, claim: &str) -> Option<&'r Verdict> {
+    report.cases.iter().find(|case| case.claim == claim).map(|case| &case.verdict)
+}
+
+fn unreachable_because(report: &Report, claim: &str, because: &str) -> bool {
+    matches!(verdict_of(report, claim), Some(Verdict::Unreachable(why)) if why.contains(because))
+}
+
+#[tokio::test]
+async fn an_app_whose_host_cannot_paint_refuses_act_and_input_at_once_and_keeps_its_layout_and_state() {
+    let report = report_of_app(Faithful::under(Condition::CannotPaint)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    for claim in CANNOT_PAINT_CLAIMS.into_iter().chain([SOURCE_KINDS_CLAIM]) {
+        assert_eq!(verdict_of(&report, claim), Some(&Verdict::Holds), "{claim}: {report:?}");
+    }
+    let shown = "the app acts, takes input, goes back and shows fixtures while its host paints";
+    assert!(unreachable_because(&report, shown, "the window is minimised"), "{report:?}");
+}
+
+#[tokio::test]
+async fn a_host_that_delivers_no_touch_refuses_it_by_its_own_name() {
+    let report = report_of_app(Faithful::under(Condition::NoTouch)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    assert_eq!(verdict_of(&report, SOURCE_KINDS_CLAIM), Some(&Verdict::Holds), "{report:?}");
+}
+
+#[tokio::test]
+async fn a_fixture_the_app_declines_is_unreachable_with_its_reason_and_breaks_nothing() {
+    let report = report_of_app(Faithful::under(Condition::DeclinesFixtures)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    for claim in [
+        "presenting a fixture shows it and names its frame",
+        "a fixture never changes the live state: presenting and releasing leaves its head where it was",
+    ] {
+        assert!(unreachable_because(&report, claim, APPROVAL), "{claim}: {report:?}");
+    }
+}
+
+#[tokio::test]
+async fn actions_and_input_the_app_declines_under_a_fixture_are_unreachable_with_its_reason() {
+    let report = report_of_app(Faithful::under(Condition::DeclinesUnderFixture)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    for claim in ["input reaches the app while a fixture stands", "a read-only action runs while a fixture stands", ACTING] {
+        assert!(unreachable_because(&report, claim, APPROVAL), "{claim}: {report:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_fixture_the_app_ends_itself_is_told_with_its_reason_and_breaks_nothing() {
+    let report = report_of_app(Faithful::under(Condition::EndsFixture)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    assert!(unreachable_because(&report, "input reaches the app while a fixture stands", ARRIVED), "{report:?}");
+    for claim in FIXTURE_ENDED_CLAIMS {
+        assert_eq!(verdict_of(&report, claim), Some(&Verdict::Holds), "{claim}: {report:?}");
+    }
+    assert!(unreachable_because(&report, "replacing and releasing a fixture", ARRIVED), "{report:?}");
 }
 
 #[tokio::test]

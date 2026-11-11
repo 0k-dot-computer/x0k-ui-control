@@ -36,6 +36,7 @@ function page(engine: Engine): PageCalls {
   return {
     declared: () => asked(`globalThis.${UI_GLOBAL}.declared()`),
     run: (name, args) => asked(`globalThis.${UI_GLOBAL}.run(${JSON.stringify(name)}, ${JSON.stringify(args)})`),
+    cannotPaint: () => asked(`globalThis.${UI_GLOBAL}.cannotPaint()`),
   };
 }
 

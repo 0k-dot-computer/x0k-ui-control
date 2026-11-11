@@ -124,6 +124,31 @@
           {"do": "move", "to": {"frame": "f1", "x": 500, "y": 5}}]}]}
       },
       "expect": {"refused": {"code": "outside_frame"}}
+    },
+    {
+      "name": "a sequence that names its requester resolves as it does unnamed: the name is a label",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [{"frame": "f1", "width": 800, "height": 600,
+          "layout": {"id": "root", "role": "window", "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "visible": true, "enabled": true, "focused": false, "interactive": false,
+            "children": [{"id": "send", "role": "button", "bounds": {"x": 700, "y": 550, "width": 80, "height": 40},
+              "visible": true, "enabled": true, "focused": false, "interactive": true}]}}],
+        "perform": {"requester_name": "Apollo", "sources": [{"id": "m", "kind": "mouse", "steps": [
+          {"do": "move", "to": {"frame": "f1", "node": "send"}},
+          {"do": "down", "button": 0},
+          {"do": "up", "button": 0}]}]}
+      },
+      "expect": {"resolved": [{"source": "m", "step": 0, "x": 740.0, "y": 570.0}]}
+    },
+    {
+      "name": "a sequence that names its requester is refused as it is unnamed: the name lets nothing through",
+      "input": {
+        "offer": {"app": "demo", "instance": "1", "interfaces": [{"name": "ui/input", "fingerprint": "fp"}]},
+        "frames": [],
+        "perform": {"requester_name": "Apollo", "sources": [{"id": "k", "kind": "key", "steps": [{"do": "key_down", "key": "Hyper"}]}]}
+      },
+      "expect": {"refused": {"code": "unknown_key", "subject": "Hyper"}}
     }
   ]
 }

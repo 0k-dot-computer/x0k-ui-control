@@ -9,6 +9,7 @@ use x0k_datum::shape::{Shape, TypeShape};
 use x0k_datum::Datum;
 
 pub use crate::history::Shown;
+use crate::RefusalCode;
 
 /// A part of an observation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Shape)]
@@ -183,7 +184,24 @@ pub struct StatePart {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Shape)]
 pub struct PartRefused {
     pub part: Part,
+    /// Why, in the protocol's words, when one of them says it.
+    #[serde(default)]
+    pub code: Option<RefusalCode>,
+    /// The reason, for a person.
     pub why: String,
+}
+
+/// The call an app whose host cannot paint its window answers in place of `call`:
+/// the same parts without the capture, and the capture's refusal when `call`
+/// asks for one (§8).
+pub fn while_cannot_paint(call: &ObserveCall, why: &str) -> (ObserveCall, Option<PartRefused>) {
+    let parts = call.parts.iter().copied().filter(|part| *part != Part::Capture).collect();
+    let refused = call.parts.contains(&Part::Capture).then(|| PartRefused {
+        part: Part::Capture,
+        code: Some(RefusalCode::CannotPaint),
+        why: why.to_string(),
+    });
+    (ObserveCall { parts, ..call.clone() }, refused)
 }
 
 /// `observe`'s answer.

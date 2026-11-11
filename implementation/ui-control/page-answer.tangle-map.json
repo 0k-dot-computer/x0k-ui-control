@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/page-answer.md",
-  "source_hash": "a1f03a0c8be74c10",
+  "source_hash": "bdcbbefb25170fd0",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,23 +9,23 @@
       "outputs": [
         {
           "path": "substrate/apps/ui-control-page/src/answer.ts",
-          "hash": "198b86deafacfc52"
+          "hash": "4629296acdb14d6b"
         },
         {
           "path": "substrate/apps/ui-control-page/src/host.ts",
-          "hash": "9f4714ee159a8416"
+          "hash": "2aa48146e3a6a6dc"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/answer-page.html",
-          "hash": "f85f5912bb32fb0b"
+          "hash": "690d3cc58ea826f2"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/answer.test.ts",
-          "hash": "d1991c35b19fd0d7"
+          "hash": "456a7fdacecaecd4"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/suite.ts",
-          "hash": "50c5ad8a7fbee841"
+          "hash": "bb8baa8de76c667f"
         }
       ]
     }

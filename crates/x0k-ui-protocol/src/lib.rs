@@ -37,6 +37,9 @@ pub enum RefusalCode {
     NoInputInterface,
     /// `ui/input`: a source of a kind the model does not have.
     UnknownSource,
+    /// `ui/input`: a source of a kind the model has and the app's host cannot
+    /// deliver, such as a touch on a host with no touch events.
+    UndeliverableSource,
     /// `ui/input`: two sources share an id.
     DuplicateSource,
     /// `ui/input`: an action its source cannot perform.
@@ -74,6 +77,15 @@ pub enum RefusalCode {
     UnreadablePolicy,
     /// `ui/act`: while a fixture stands, the replay policy refuses the action.
     PolicyRefuses,
+    /// `ui/act`, `ui/input`, and an observation's capture: the app's host
+    /// cannot paint its window now, so no frame would show.
+    CannotPaint,
+    /// `ui/history`'s `present`, and `ui/act` or `ui/input` while a fixture
+    /// stands: the app declines the call for now, for the reason it gives.
+    Declined,
+    /// `ui/act`, `ui/input`: the app ended the fixture the session presented,
+    /// for the reason it gives, and shows its live state.
+    FixtureEnded,
 }
 
 /// A call refused before anything ran.
@@ -88,7 +100,8 @@ pub struct Refused {
 }
 
 impl Refused {
-    pub(crate) fn new(code: RefusalCode, subject: &str, why: impl Into<String>) -> Self {
+    /// A refusal of `code` about `subject`.
+    pub fn new(code: RefusalCode, subject: &str, why: impl Into<String>) -> Self {
         Refused { code, subject: Some(subject.to_string()), why: why.into() }
     }
 }

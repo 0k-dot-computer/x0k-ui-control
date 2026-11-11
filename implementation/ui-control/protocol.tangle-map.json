@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/protocol.md",
-  "source_hash": "2da6dcff6407ff79",
+  "source_hash": "3f002f95935db807",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-protocol/Cargo.toml",
-          "hash": "6c9ab3e8f9686ce2"
+          "hash": "8d5dfbb876eed9ce"
         },
         {
           "path": "crates/x0k-ui-protocol/src/lib.rs",
-          "hash": "52e4000770b38908"
+          "hash": "aa44ef8fa8dae094"
         },
         {
           "path": "crates/x0k-ui-protocol/src/offer.rs",
@@ -21,7 +21,7 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/observe.rs",
-          "hash": "0d8d7bf567039986"
+          "hash": "b2400c8d49df183c"
         },
         {
           "path": "crates/x0k-ui-protocol/src/act.rs",
@@ -29,7 +29,7 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/input.rs",
-          "hash": "d191b8e8456c1fd6"
+          "hash": "0939bcf805707ef2"
         },
         {
           "path": "crates/x0k-ui-protocol/src/history.rs",
@@ -37,7 +37,7 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/fixture.rs",
-          "hash": "a7d7d12cd7926a24"
+          "hash": "d5ab94b4f7dc5681"
         },
         {
           "path": "crates/x0k-ui-protocol/src/replay.rs",
@@ -49,7 +49,7 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/presentation.rs",
-          "hash": "5769a646986b2f9a"
+          "hash": "821e00e49cd94b4e"
         },
         {
           "path": "crates/x0k-ui-protocol/src/page.rs",
@@ -61,11 +61,11 @@
         },
         {
           "path": "crates/x0k-ui-protocol/tests/shapes.rs",
-          "hash": "d268b6d71d757ea5"
+          "hash": "d0e47e22ee19481b"
         },
         {
           "path": "crates/x0k-ui-protocol/tests/conformance.rs",
-          "hash": "3a048dd977628ce5"
+          "hash": "791484bc989ec38b"
         }
       ]
     }

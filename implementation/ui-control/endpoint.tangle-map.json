@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/endpoint.md",
-  "source_hash": "fb26c329588a0b1d",
+  "source_hash": "b31720abb737eb3a",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-endpoint/Cargo.toml",
-          "hash": "9c18820ccd189a1c"
+          "hash": "41477ed19a8ee2b3"
         },
         {
           "path": "crates/x0k-ui-endpoint/src/lib.rs",
@@ -21,7 +21,7 @@
         },
         {
           "path": "crates/x0k-ui-endpoint/src/server.rs",
-          "hash": "e172eb2f4ba49250"
+          "hash": "c482c4f56fba7860"
         },
         {
           "path": "crates/x0k-ui-endpoint/src/address.rs",
@@ -33,7 +33,7 @@
         },
         {
           "path": "crates/x0k-ui-endpoint/tests/endpoint.rs",
-          "hash": "9eef2e37c5619722"
+          "hash": "a7712b6f77d58f1a"
         }
       ]
     }

@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/conformance.md",
-  "source_hash": "5fb46526e99c6b86",
+  "source_hash": "783c8b29b76aabda",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-endpoint/src/conformance.rs",
-          "hash": "46e11d2476d61207"
+          "hash": "7ea53c0183725fb1"
         },
         {
           "path": "crates/x0k-ui-endpoint/src/bin/ui-conformance.rs",
@@ -17,7 +17,7 @@
         },
         {
           "path": "crates/x0k-ui-endpoint/tests/conformance_suite.rs",
-          "hash": "3f2f0c78a418c04f"
+          "hash": "5f11a9f5a65c06af"
         },
         {
           "path": "crates/x0k-ui-endpoint/tests/trace.rs",

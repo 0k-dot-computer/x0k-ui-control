@@ -303,6 +303,13 @@ impl InputLook {
     /// What `requester`'s label says: the name an exact key gives, else the
     /// longest prefix key's, else the requester as it is.
     pub fn name<'a>(&'a self, requester: &'a str) -> &'a str {
+        self.name_given(requester, None)
+    }
+
+    /// What `requester`'s label says when its sequence names it `given`
+    /// (`Perform::requester_name`): the look's own name for the requester
+    /// first, then `given`, then the requester as it is.
+    pub fn name_given<'a>(&'a self, requester: &'a str, given: Option<&'a str>) -> &'a str {
         if let Some(name) = self.names.get(requester) {
             return name;
         }
@@ -310,7 +317,8 @@ impl InputLook {
             let prefix = key.strip_suffix('*')?;
             requester.starts_with(prefix).then_some((prefix.len(), name.as_str()))
         });
-        prefixed.max_by_key(|(len, _)| *len).map_or(requester, |(_, name)| name)
+        let named = prefixed.max_by_key(|(len, _)| *len).map(|(_, name)| name);
+        named.or(given.filter(|given| !given.is_empty())).unwrap_or(requester)
     }
 }
 
@@ -422,6 +430,16 @@ mod tests {
         assert_eq!(look.name("uid 501 pid 9"), "Ana's helper");
         assert_eq!(look.name("uid 501 pid 3"), "an agent");
         assert_eq!(look.name("uid 502 pid 1"), "uid 502 pid 1");
+    }
+
+    #[test]
+    fn a_look_names_a_requester_before_the_name_it_gives_itself() {
+        let mut look = InputLook::default();
+        look.names.insert("uid 501 pid 7*".into(), "Apollo".into());
+        assert_eq!(look.name_given("uid 501 pid 77", Some("Ana")), "Apollo");
+        assert_eq!(look.name_given("uid 502 pid 1", Some("Ana's driver")), "Ana's driver");
+        assert_eq!(look.name_given("uid 502 pid 1", Some("")), "uid 502 pid 1");
+        assert_eq!(look.name_given("uid 502 pid 1", None), "uid 502 pid 1");
     }
 
     #[test]

@@ -49,10 +49,21 @@ export async function webkitgtk(page: string, script: string, { width, height, c
     const lines = createInterface({ input: link })[Symbol.asyncIterator]();
     const next = async () => JSON.parse((await Promise.race([lines.next(), ended, deadline('answer')])).value);
     const version = (await next()).ready;
+    // Each answer goes to the request with its id, so a request may wait while another is answered.
+    const waiting = new Map<number, (reply: any) => void>();
+    void (async () => {
+      for (let line = await lines.next(); !line.done; line = await lines.next()) {
+        const reply = JSON.parse(line.value);
+        waiting.get(reply.id)?.(reply);
+        waiting.delete(reply.id);
+      }
+    })();
     let last = 0;
     const call = async (request: object) => {
-      link.write(JSON.stringify({ id: ++last, ...request }) + '\n');
-      const reply = await next();
+      const id = ++last;
+      const answered = new Promise<any>((done) => waiting.set(id, done));
+      link.write(JSON.stringify({ id, ...request }) + '\n');
+      const reply = await Promise.race([answered, ended, deadline('answer')]);
       if (reply.error) throw new Error(reply.error);
       return reply;
     };
@@ -64,6 +75,8 @@ export async function webkitgtk(page: string, script: string, { width, height, c
         const r = await call({ op: 'snap' });
         return bgraImage(r.width, r.height, r.stride, Buffer.from(r.bgra, 'base64'), Buffer.from(r.png, 'base64'));
       },
+      hide: async () => { await call({ op: 'hide' }); },
+      show: async () => { await call({ op: 'show' }); },
       close: async () => { link.destroy(); await stopAll(); },
     };
   } catch (e) {

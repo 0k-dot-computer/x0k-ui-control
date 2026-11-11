@@ -17,6 +17,9 @@ pub struct Held<R> {
     pub epoch: u64,
     pub read: R,
     pub hold_ms: f64,
+    /// Why the page could not paint while it was held, when it could not.
+    #[serde(default)]
+    pub unpainted: Option<String>,
 }
 
 /// What a host does to a page around one capture.
@@ -33,6 +36,9 @@ pub trait HoldingHost {
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Refused {
     pub part: &'static str,
+    /// The protocol's word for why, when one says it: `cannot_paint`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<&'static str>,
     pub why: String,
 }
 
@@ -61,9 +67,14 @@ pub async fn held_capture<H: HoldingHost>(host: &mut H, tries: usize) -> Result<
     for _ in 0..tries.max(1) {
         let held = host.hold().await?;
         hold_ms.push(held.hold_ms);
+        if let Some(why) = held.unpainted {
+            host.verify().await?;
+            let refused = Some(Refused { part: "capture", code: Some("cannot_paint"), why });
+            return Ok(HeldCapture { frame: held.epoch.to_string(), read: held.read, capture: None, refused, hold_ms });
+        }
         let capture = host.capture().await;
         let after = host.verify().await?;
-        let refuse = |why: String| Some(Refused { part: "capture", why });
+        let refuse = |why: String| Some(Refused { part: "capture", code: None, why });
         match capture {
             Err(failure) => {
                 let refused = refuse(format!("capture failed: {failure}"));
@@ -77,7 +88,7 @@ pub async fn held_capture<H: HoldingHost>(host: &mut H, tries: usize) -> Result<
         last = Some(held);
     }
     let last = last.expect("the loop ran at least once");
-    let refused = Some(Refused { part: "capture", why: format!("page_unsettled: epochs {}", seen.join(", ")) });
+    let refused = Some(Refused { part: "capture", code: None, why: format!("page_unsettled: epochs {}", seen.join(", ")) });
     Ok(HeldCapture { frame: last.epoch.to_string(), read: last.read, capture: None, refused, hold_ms })
 }
 
@@ -86,16 +97,17 @@ mod tests {
     use super::*;
 
     /// A page whose epoch after each capture is the next of `after`, held at 7.
-    struct Scripted { after: Vec<u64>, capture_fails: bool, verified: usize }
+    struct Scripted { after: Vec<u64>, capture_fails: bool, verified: usize, unpainted: Option<String>, captured: usize }
 
     impl HoldingHost for Scripted {
         type Read = &'static str;
         type Capture = &'static str;
         type Error = String;
         async fn hold(&mut self) -> Result<Held<&'static str>, String> {
-            Ok(Held { epoch: 7, read: "read", hold_ms: 1.0 })
+            Ok(Held { epoch: 7, read: "read", hold_ms: 1.0, unpainted: self.unpainted.clone() })
         }
         async fn capture(&mut self) -> Result<&'static str, String> {
+            self.captured += 1;
             if self.capture_fails { Err("no surface".into()) } else { Ok("pixels") }
         }
         async fn verify(&mut self) -> Result<u64, String> {
@@ -106,14 +118,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_moved_epoch_is_held_again_and_a_still_one_answers() {
-        let mut page = Scripted { after: vec![8, 7], capture_fails: false, verified: 0 };
+        let mut page = Scripted { after: vec![8, 7], capture_fails: false, verified: 0, unpainted: None, captured: 0 };
         let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
         assert_eq!((held.frame.as_str(), held.capture, held.refused, held.hold_ms.len()), ("7", Some("pixels"), None, 2));
     }
 
     #[tokio::test]
     async fn a_page_that_never_settles_is_refused_as_unsettled_with_its_read() {
-        let mut page = Scripted { after: vec![8, 9, 10], capture_fails: false, verified: 0 };
+        let mut page = Scripted { after: vec![8, 9, 10], capture_fails: false, verified: 0, unpainted: None, captured: 0 };
         let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
         assert_eq!(held.refused.unwrap().why, "page_unsettled: epochs 7→8, 7→9, 7→10");
         assert_eq!((held.read, held.capture), ("read", None));
@@ -121,9 +133,17 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_capture_is_refused_with_its_reason_after_the_page_is_released() {
-        let mut page = Scripted { after: vec![7], capture_fails: true, verified: 0 };
+        let mut page = Scripted { after: vec![7], capture_fails: true, verified: 0, unpainted: None, captured: 0 };
         let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
         assert_eq!(held.refused.unwrap().why, "capture failed: no surface");
         assert_eq!(page.verified, 1);
+    }
+
+    #[tokio::test]
+    async fn a_page_that_could_not_paint_is_refused_as_cannot_paint_uncaptured_and_released() {
+        let mut page = Scripted { after: vec![7], capture_fails: false, verified: 0, unpainted: Some("the page is hidden".into()), captured: 0 };
+        let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
+        assert_eq!(held.refused, Some(Refused { part: "capture", code: Some("cannot_paint"), why: "the page is hidden".into() }));
+        assert_eq!((held.read, held.capture, page.captured, page.verified), ("read", None, 0, 1));
     }
 }

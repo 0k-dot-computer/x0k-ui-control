@@ -31,6 +31,10 @@ when the field is absent or null.
 | `replay-policy.json` | `offer.replay_policy`: whether an offer's replay policy can be read | ui-interfaces §5 |
 | `disposition.json` | `replay.disposition`: what an effect takes on a trip, by the replay policy | ui-interfaces §4, §5 |
 | `classes.json` | `operation.class`: the side-effect class each operation declares | ui-interfaces §1 |
+| `cannot-paint.json` | `observe.while_cannot_paint`: what an app whose host cannot paint its window answers of an `observe` | §8 |
+| `deliver.json` | `input.delivers`: what a host does with a `perform` holding a kind it cannot deliver | §10 |
+| `refusals.json` | `refusal.read`: which words a refusal's code reads as | §8 to §10, ui-interfaces §4 |
+| `release.json` | `fixture.release_read`: what a `release` answers, among it a fixture the app ended | ui-interfaces §4 |
 
 A bare section number is a section of `ui-control-channel`.
 
@@ -43,10 +47,20 @@ compares it.
 `unknown_key`, `outside_frame`, `unknown_frame`, `unknown_node`,
 `no_history_interface`, `unknown_position`, `showing_past`, `no_fixtures`,
 `wrong_fingerprint`, `misfit_state`, `stale_head`, `unreadable_policy`,
-`policy_refuses`.
+`policy_refuses`, `undeliverable_source`, `cannot_paint`, `declined`,
+`fixture_ended`.
+
+A part an observation refuses may carry a `code` too: `cannot_paint` when the
+host cannot paint the window now. A part refusal with no code
+gives only its `why`.
 
 A `release` of a handle that does not stand is not refused but answered
-`not_standing`, naming the handle.
+`not_standing`, naming the handle. A `release` of a fixture the app ended itself
+is answered `ended`, naming the handle and the app's reason.
+
+A `perform` may carry `requester_name`, the requester's name for a person to
+read. No check reads it: `input.json` holds that a sequence resolves and is
+refused the same with it as without it.
 
 A navigation to a position the app has dropped is not refused but answered
 `unavailable`, with the grade the app still holds the position at and the

@@ -62,6 +62,9 @@ pub enum ReleaseAnswer {
     },
     /// No fixture stands as `handle`.
     NotStanding { handle: String },
+    /// The app ended the fixture `handle` itself, for `reason`, and shows its
+    /// live state (`ui-interfaces` §4).
+    Ended { handle: String, reason: String },
 }
 
 /// `patch` applied to `target`, as RFC 7396 §2 says.

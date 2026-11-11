@@ -1,0 +1,65 @@
+{
+  "clause": "ui-control-channel §8",
+  "check": "observe.while_cannot_paint",
+  "about": "While the host cannot paint the window, the app answers the call without its capture, and refuses the capture as cannot_paint when the call asks for one. The answer is {asks: the parts the app answers, refused: the capture's refusal or null}.",
+  "vectors": [
+    {
+      "name": "a call for every part keeps the layout and state and refuses the capture",
+      "input": {
+        "call": {
+          "parts": [
+            "capture",
+            "layout",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "asks": [
+          "layout",
+          "state"
+        ],
+        "refused": {
+          "part": "capture",
+          "code": "cannot_paint"
+        }
+      }
+    },
+    {
+      "name": "a call for the capture alone asks the app for nothing and refuses the capture",
+      "input": {
+        "call": {
+          "parts": [
+            "capture"
+          ],
+          "scale": 0.5
+        }
+      },
+      "expect": {
+        "asks": [],
+        "refused": {
+          "part": "capture",
+          "code": "cannot_paint"
+        }
+      }
+    },
+    {
+      "name": "a call that asks for no capture is answered as it is, with nothing refused",
+      "input": {
+        "call": {
+          "parts": [
+            "layout",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "asks": [
+          "layout",
+          "state"
+        ],
+        "refused": null
+      }
+    }
+  ]
+}

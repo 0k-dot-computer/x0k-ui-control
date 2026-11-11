@@ -15,7 +15,7 @@ export interface InputLook {
  * each mark with its requester's colour index. */
 export interface Drawing {
   units: number;
-  pointers: { requester: string; at: [number, number]; pressed: boolean; hue?: number }[];
+  pointers: { requester: string; name?: string; at: [number, number]; pressed: boolean; hue?: number }[];
   clicks: { at: [number, number]; gone: number; hue?: number }[];
   keys?: { requester: string; text: string; gone: number; hue?: number };
 }
@@ -97,13 +97,15 @@ export function makeLayer(win: Window): DrawnLayer {
     const palette = declared.colors?.length ? declared.colors : PALETTE;
     (el as HTMLElement).style.setProperty('--ink', palette[hue % palette.length]);
   };
-  // The look's name for `requester`: an exact key's, else the longest prefix key's.
-  const named = (requester: string) => {
+  // The label for `requester`, whose sequence names it `given`: the look's
+  // name for it, an exact key's, else the longest prefix key's, else `given`,
+  // else the requester as it is.
+  const named = (requester: string, given?: string) => {
     const names = declared.names ?? {};
     if (requester in names) return names[requester];
     const prefixes = Object.keys(names).filter((key) => key.endsWith('*') && requester.startsWith(key.slice(0, -1)));
     const longest = prefixes.sort((a, b) => b.length - a.length)[0];
-    return longest ? names[longest] : requester;
+    return longest ? names[longest] : given || requester;
   };
   // A label beside a pointer at (`x`, `y`) in CSS pixels, `down` below its tip:
   // to its right, or to its left where it would run past the viewport's edge.
@@ -144,7 +146,7 @@ export function makeLayer(win: Window): DrawnLayer {
         ink(mark, pointer.hue);
         const name = doc.createElement('div');
         name.className = 'label';
-        name.textContent = named(pointer.requester);
+        name.textContent = named(pointer.requester, pointer.name);
         name.style.fontSize = `${size}px`;
         ink(name, pointer.hue);
         beside(name, pointer.at[0] * k, pointer.at[1] * k, 18);

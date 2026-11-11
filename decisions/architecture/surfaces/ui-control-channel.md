@@ -16,7 +16,8 @@ architecture:ui-control-channel a x0k:Architecture ;
         architecture:graded-introspection,
         architecture:ui-interfaces ;
     x0k:motivatedBy intent:396792f0-be07-c3dd-e35d-a95f93c74fe3,
-        intent:761c189e-6c4d-b04a-4f07-3812cca3780d .
+        intent:761c189e-6c4d-b04a-4f07-3812cca3780d,
+        intent:cf7be0e5-3667-afc6-728b-3a9d96c51507 .
 ```
 
 ## Brief
@@ -241,10 +242,16 @@ offer does not name is refused when the procedure is installed
 **Decides:** what observing an app answers.
 **Invariants:** observing changes nothing in the app; every part of one
 observation is read from the same presented frame and names it; layout
-bounds are in the capture's own pixel coordinates.
+bounds are in the capture's own pixel coordinates; a capture says whether
+it carries the host's presentation of driver input.
 **On failure:** a part the app cannot produce is refused by name, and the
 other parts of the observation are kept; an app that presents no frame
-answers the layout and the state and refuses the capture.
+answers the layout and the state and refuses the capture. While the app's
+host cannot paint its window, as for a minimised window, it refuses the
+capture as `cannot_paint` and answers the layout and the state, so a driver
+learns at once that no frame will come. The host decides at the time of each
+call. A host that paints a covered or hidden window answers every part as
+usual.
 **Checked by:** the `ui/observe` vectors of the UI-control conformance
 suite (intent 1f4dc28c).
 
@@ -260,7 +267,10 @@ suite (intent 1f4dc28c).
   each part:
   - `capture`: the frame's pixels as a PNG, with the image's size in
     physical pixels and the display's scale factor. The call may ask for a
-    region and a smaller scale.
+    region and a smaller scale. By default the host draws its presentation
+    of driver input (§10) over the frame's pixels, and the capture says that
+    it does; the call may ask for the frame alone. The layout and the state
+    are the frame's either way.
   - `layout`: the layout tree. Each node has an id, a role, a label, a
     value, its bounds in the capture's pixel coordinates, which are the
     part of it that shows, the box it was laid out in when clipping cuts it
@@ -290,7 +300,9 @@ on the timeline (§3).
 **On failure:** an action the offer does not list, arguments that misfit
 the action's shape, and an action whose side-effect class the grant does
 not cover are each refused by name before the app runs anything; an action
-that runs and fails answers its failure, by name.
+that runs and fails answers its failure, by name. While the app's host
+cannot paint its window, it refuses every invocation as `cannot_paint` before
+the app runs anything, because no frame would show what the action did (§8).
 **Checked by:** the `ui/act` vectors of the UI-control conformance suite
 (intent 1f4dc28c).
 
@@ -311,18 +323,34 @@ own actions without changing anything.
 
 ### 10. `ui/input` acts as a person at the screen would
 
-**Decides:** how a driver sends pointer, key and wheel input.
+**Decides:** how a driver sends pointer, key and wheel input, and how a
+person present sees it.
 **Invariants:** input is one sequence of actions on one model; pointer
 positions are in the capture's pixel coordinates (§8); the app delivers
 the input through its own hit-testing and focus, as it delivers a
 person's; the sequence runs in order, and the app answers once it has
-handled the whole sequence.
+handled the whole sequence; the app's host presents every sequence it
+delivers, unless the call opts out, over the app's window and outside the
+app's frame, layout and state, labelled with the requester's name; the
+person's own input keeps running beside a sequence unless the person grants
+the sequence a takeover; only a person's input answers a takeover's ask.
 **On failure:** a sequence that names an unknown source, an unknown key, a
 position outside the frame, or a layout node the named frame does not hold
 is refused by name before any of it runs; input to an app whose offer does
-not name `ui/input` is refused by name.
+not name `ui/input` is refused by name. A source of a kind the model has and
+the host cannot deliver, such as a touch on a host with no touch events, is
+refused as `undeliverable_source` before any of the sequence runs, never as
+an unknown source. While the app's host cannot paint its window, it refuses
+the sequence as `cannot_paint` before any of it runs (§8). A takeover the
+offer does not say the host holds is refused as `takeover_unheld`, and a
+takeover the person does not grant is refused as `takeover_not_granted`,
+naming the requester; each is refused before any of the sequence runs.
 **Checked by:** the `ui/input` vectors of the UI-control conformance suite
-(intent 1f4dc28c).
+(intent 1f4dc28c), among them a takeover the offer does not hold and the
+watchable pace's floor; the endpoint's test that a takeover runs only when
+the person grants it (`x0k:implementation/ui-control/endpoint`); the
+presentation model's tests that a takeover is held only after a yes and that
+the exit key ends it (`x0k:implementation/ui-control/protocol`).
 
 `ui/input` has one operation:
 
@@ -339,6 +367,55 @@ not name `ui/input` is refused by name.
 clicks. A driver that knows the app's action for what it wants to do
 invokes that action through `ui/act`, and uses input for what no action
 names and for testing the surface a person touches.
+
+**Presenting input.** The endpoint hands each sequence it has checked to the
+app's host before the app delivers it: the sources, the positions resolved
+in the named frame's pixels, the requester the connection names and the
+`requester_name` the sequence carries (`ui-interfaces` §6). The host draws
+the sequence over the app's window: the pointer's moves, each press and
+release, the keys typed and each scroll. The drawing is never part of the
+app's frame, layout or state, so it moves nothing `ui/observe` reads and no
+hit-test meets it. Each host has a default look for the drawing; an app or a
+theme may declare its own, which changes how input is drawn and never when
+it is delivered. The offer says whether the host draws input and keeps the
+watchable pace, and whether it holds a takeover.
+
+The host labels the drawing with the requester's name: the name the look
+gives that requester, else the `requester_name` the sequence carries, else
+the requester as its credentials name it. The name labels the drawing and
+nothing else; the drawing keeps each requester apart by its credentials.
+
+`perform` carries three options for how the host shows a sequence:
+
+- **`present`**, on by default: whether the host draws the sequence. A
+  sequence the host does not draw runs at the fast pace.
+- **`pace`**, `fast` by default or `watchable`. At `fast` the host delivers
+  each event at once and marks where it landed. At `watchable` it moves the
+  drawn pointer to each position at a speed a person can follow, and
+  delivers each event when the pointer reaches it. Each press and each key
+  lands no sooner than 250 ms after the event before it, and a look may
+  wait longer, never shorter. The answer comes later by that travel.
+- **`takeover`**, off by default. A takeover runs only under the person's
+  permission. The permission the person gives the driver's action grants
+  the takeover the driver asks for with it, and a sequence whose action
+  needs no permission asks the person for the takeover alone. The host
+  waits at most 30 seconds for the person's answer, and no answer is a no.
+  From the person's yes to the sequence's answer, the host holds back the
+  person's input to the app's window and shows that it does, naming the
+  requester and the input that ends the takeover. The person ends it at
+  once with that input (`design:ui-driver`, "Letting a demonstration
+  finish"). A window holds one takeover at a time, so a takeover asked for
+  while another stands is not granted.
+
+<a name="folio-instance-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1"></a><sub data-instance-iri="x0k:techne/present-a-driver-s-input" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/present-a-driver-s-input</code> · <a href="#folio-source-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1">source declaration</a> · the graph block at line 411 is not Turtle: The prefix techne: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md:410</sub><a name="folio-source-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1"></a>
+
+```turtle folio:graph
+@prefix techne: <https://0k.computer/ontology#techne/> .
+techne:present-a-driver-s-input a x0k:Techne ;
+    x0k:status "proposed" ;
+    x0k:realizes affordance:watch-an-agent-act,
+        affordance:follow-a-demonstration .
+```
 
 ## Rationale
 

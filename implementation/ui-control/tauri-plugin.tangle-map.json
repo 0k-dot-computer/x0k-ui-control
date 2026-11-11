@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/tauri-plugin.md",
-  "source_hash": "41d57402d6fcfe21",
+  "source_hash": "a94fdc3ad7b853e9",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,15 +9,15 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-tauri/Cargo.toml",
-          "hash": "1847326f1cea4dda"
+          "hash": "42c52f4de6b7a7a0"
         },
         {
           "path": "crates/x0k-ui-tauri/src/lib.rs",
-          "hash": "9eedddf0aaf42b03"
+          "hash": "96306949d1565569"
         },
         {
           "path": "crates/x0k-ui-tauri/src/held.rs",
-          "hash": "73a873b0f44bfa34"
+          "hash": "3d9abacc8e726b0e"
         },
         {
           "path": "crates/x0k-ui-tauri/tests/endpoint_dir.rs",
@@ -25,7 +25,7 @@
         },
         {
           "path": "crates/x0k-ui-tauri/src/page.rs",
-          "hash": "b4f7267e1c92f409"
+          "hash": "7a27bf8f8120ea61"
         },
         {
           "path": "crates/x0k-ui-tauri/permissions/default.toml",
@@ -41,7 +41,7 @@
         },
         {
           "path": "crates/x0k-ui-tauri/src/input.rs",
-          "hash": "e1edddd326e96081"
+          "hash": "768b127c233d0c4c"
         },
         {
           "path": "crates/x0k-ui-tauri/src/snapshot_macos.rs",
@@ -49,15 +49,19 @@
         },
         {
           "path": "crates/x0k-ui-tauri/src/input_macos.rs",
-          "hash": "525aa09dfab50183"
+          "hash": "68f3efd19e4d08ca"
+        },
+        {
+          "path": "crates/x0k-ui-tauri/src/painting_macos.rs",
+          "hash": "c157f4ccde13f1ba"
         },
         {
           "path": "crates/x0k-ui-tauri/src/endpoint.rs",
-          "hash": "422cdb05dea66e80"
+          "hash": "7f6048f3034a986e"
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/Cargo.toml",
-          "hash": "5d286cb2ccb4c568"
+          "hash": "e37eb46a837641e7"
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/tauri.conf.json",
@@ -77,11 +81,11 @@
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/src/main.rs",
-          "hash": "192abc70c80643e1"
+          "hash": "f68fb3f18d0d542c"
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/tests/probe.test.ts",
-          "hash": "9307417e93ddde79"
+          "hash": "b5c42046a99947b0"
         },
         {
           "path": "crates/x0k-ui-tauri/probe-app/tests/probe.rs",

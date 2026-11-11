@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use x0k_ui_endpoint::client::UiClient;
-use x0k_ui_endpoint::server::{serve_connection, serve_connection_from, Endpoint, UiApp};
-use x0k_ui_endpoint::{InvokeAnswer, PerformAnswer};
+use x0k_ui_endpoint::server::{serve_connection, serve_connection_from, Declinable, Endpoint, UiApp};
+use x0k_ui_endpoint::{InvokeAnswer, PerformAnswer, ReleaseAnswer};
 use x0k_ui_protocol::act::{Grant, Invoke, Outcome};
-use x0k_ui_protocol::fixture::{Fixture, PresentAnswer, PresentCall};
+use x0k_ui_protocol::fixture::{Fixture, PresentAnswer, PresentCall, ReleaseCall};
 use x0k_ui_protocol::history::{HistoryOffer, Shown};
 use x0k_ui_protocol::input::{HeldFrame, InputOffer, Perform, Resolved, Source, Step, Target};
-use x0k_ui_protocol::observe::{Capture, Observation, ObserveCall, Part};
+use x0k_ui_protocol::observe::{check_observation, Bounds, Capture, LayoutNode, Observation, ObserveCall, Part};
 use x0k_ui_protocol::observe::StatePart;
 use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY};
 use x0k_ui_protocol::replay::{Covers, PolicyEntry, ReplayDisposition};
@@ -31,6 +31,47 @@ struct Demo {
     takes_over: Option<bool>,
     /// The requester of each sequence it ran.
     requesters: Arc<Mutex<Vec<String>>>,
+    /// Why its host cannot paint its window, when it cannot.
+    unpainted: Option<String>,
+    /// The source kinds its host delivers, when not every kind.
+    delivers: Option<&'static [&'static str]>,
+    /// Why it declines actions and input under a fixture, when it does.
+    declines: Option<String>,
+    /// The fixture it ended itself, and why.
+    ended: Arc<Mutex<Option<(String, String)>>>,
+    /// The one requester the person grants a takeover, when there is one.
+    grants_to: Option<&'static str>,
+    /// Whom the person was asked to grant a takeover.
+    asked: Arc<Mutex<Vec<String>>>,
+    /// The name each sequence it ran gave its requester.
+    names: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+impl Demo {
+    /// End the fixture that stands, for `reason`, and show the live state.
+    fn end_fixture(&self, reason: &str) {
+        let handle = self.fixture.lock().expect("the demo's lock").take().expect("a fixture stands");
+        *self.ended.lock().expect("the demo's lock") = Some((handle, reason.to_string()));
+    }
+}
+
+fn window() -> LayoutNode {
+    LayoutNode {
+        id: "root".to_string(),
+        role: "window".to_string(),
+        label: None,
+        value: None,
+        bounds: Bounds { x: 0.0, y: 0.0, width: 4.0, height: 2.0 },
+        laid_out: None,
+        visible: true,
+        enabled: true,
+        focused: false,
+        interactive: false,
+        action: None,
+        source: None,
+        composition: None,
+        children: Vec::new(),
+    }
 }
 
 fn any_shape() -> x0k_datum::Datum {
@@ -59,12 +100,17 @@ impl UiApp for Demo {
         }
     }
 
-    async fn observe(&self, _call: ObserveCall) -> Observation {
+    async fn observe(&self, call: ObserveCall) -> Observation {
+        let wants = |part| call.parts.contains(&part);
+        let capture = Capture { png: vec![0, 159, 146, 150], width: 4, height: 2, scale_factor: 2.0, presented: false };
         Observation {
             frame: Some("f1".to_string()),
-            capture: Some(Capture { png: vec![0, 159, 146, 150], width: 4, height: 2, scale_factor: 2.0, presented: false }),
-            layout: None,
-            state: None,
+            capture: wants(Part::Capture).then_some(capture),
+            layout: wants(Part::Layout).then(window),
+            state: match wants(Part::State) {
+                true => self.live_state().await,
+                false => None,
+            },
             refused: Vec::new(),
             shown: Some(Shown::Live),
         }
@@ -86,11 +132,13 @@ impl UiApp for Demo {
 
     async fn perform_for(&self, requester: &str, perform: Perform, resolved: Vec<Resolved>) -> Option<String> {
         self.requesters.lock().expect("the demo's lock").push(requester.to_string());
+        self.names.lock().expect("the demo's lock").push(perform.requester_name.clone());
         self.perform(perform, resolved).await
     }
 
-    async fn grant_takeover(&self, _requester: &str) -> bool {
-        self.takes_over == Some(true)
+    async fn grant_takeover(&self, requester: &str) -> bool {
+        self.asked.lock().expect("the demo's lock").push(requester.to_string());
+        self.takes_over == Some(true) || self.grants_to == Some(requester)
     }
 
     async fn shown(&self) -> Shown {
@@ -111,6 +159,32 @@ impl UiApp for Demo {
     async fn present(&self, _state: Value) -> PresentAnswer {
         *self.fixture.lock().expect("the demo's lock") = Some("x1".to_string());
         PresentAnswer::Presented { handle: "x1".to_string(), frame: Some("f4".to_string()) }
+    }
+
+    async fn cannot_paint(&self) -> Option<String> {
+        self.unpainted.clone()
+    }
+
+    fn delivers(&self) -> &[&str] {
+        self.delivers.unwrap_or(x0k_ui_protocol::input::SOURCE_KINDS)
+    }
+
+    async fn declines(&self, _call: Declinable<'_>) -> Option<String> {
+        self.declines.clone()
+    }
+
+    async fn release(&self, handle: String) -> ReleaseAnswer {
+        let mut fixture = self.fixture.lock().expect("the demo's lock");
+        if fixture.as_deref() != Some(handle.as_str()) {
+            return ReleaseAnswer::NotStanding { handle };
+        }
+        *fixture = None;
+        ReleaseAnswer::Released { frame: Some("f5".to_string()) }
+    }
+
+    async fn fixture_ended(&self, handle: &str) -> Option<String> {
+        let ended = self.ended.lock().expect("the demo's lock");
+        ended.as_ref().filter(|(ended, _)| ended == handle).map(|(_, reason)| reason.clone())
     }
 }
 
@@ -209,6 +283,59 @@ async fn input_reaches_the_app_resolved_or_not_at_all() {
     assert_eq!(demo.performed.lock().expect("the lock").len(), 1);
 }
 
+#[tokio::test]
+async fn while_the_host_cannot_paint_an_action_and_input_are_refused_as_cannot_paint_and_never_run() {
+    let demo = Demo { unpainted: Some("the window is minimised".to_string()), ..Demo::default() };
+    let (client, demo) = driven_as(demo, Grant { classes: vec![SideEffect::NonIdempotent] }).await;
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    let InvokeAnswer::Refused(refused) = client.invoke(&invoke).await.expect("an answer") else {
+        panic!("the action was answered");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::CannotPaint, Some("chat.send")));
+    let PerformAnswer::Refused(refused) = client.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::CannotPaint, Some("ui/input")));
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "an action ran while the host could not paint");
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "input ran while the host could not paint");
+
+    let PerformAnswer::Refused(refused) = client.perform(&click_at(500.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!(refused.code, RefusalCode::OutsideFrame, "the call's own checks come first");
+}
+
+#[tokio::test]
+async fn while_the_host_cannot_paint_an_observation_refuses_the_capture_and_keeps_the_layout_and_state() {
+    let demo = Demo { unpainted: Some("the window is minimised".to_string()), ..Demo::default() };
+    let (client, _) = driven_as(demo, Grant { classes: vec![] }).await;
+    let call = ObserveCall { parts: vec![Part::Capture, Part::Layout, Part::State], region: None, scale: None, frame_only: false };
+    let observation = client.observe(&call).await.expect("an observation");
+    assert_eq!(check_observation(&call, &observation), Ok(()), "{observation:?}");
+    assert!(observation.capture.is_none(), "a capture came back");
+    let refused: Vec<_> = observation.refused.iter().map(|refused| (refused.part, refused.code)).collect();
+    assert_eq!(refused, vec![(Part::Capture, Some(RefusalCode::CannotPaint))]);
+    assert!(observation.layout.is_some() && observation.state.is_some(), "{observation:?}");
+
+    let (client, _) = driven(Grant { classes: vec![] }).await;
+    let observation = client.observe(&call).await.expect("an observation");
+    assert!(observation.capture.is_some() && observation.refused.is_empty(), "a visible window answers every part");
+}
+
+#[tokio::test]
+async fn a_source_kind_the_host_does_not_deliver_is_refused_as_undeliverable_and_never_reaches_the_app() {
+    let demo = Demo { delivers: Some(&["mouse", "key", "wheel"]), ..Demo::default() };
+    let (client, demo) = driven_as(demo, Grant { classes: vec![] }).await;
+    let touch = Perform { sources: vec![Source { kind: "touch".to_string(), ..click_at(5.0).sources[0].clone() }], ..Perform::default() };
+    let PerformAnswer::Refused(refused) = client.perform(&touch).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::UndeliverableSource, Some("touch")));
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "the app heard a touch it cannot deliver");
+    let answer = client.perform(&click_at(5.0)).await.expect("an answer");
+    assert_eq!(answer, PerformAnswer::Done { frame: Some("f3".to_string()) });
+}
+
 /// A session with `demo` showing a fixture.
 async fn under_a_fixture(demo: Demo) -> (UiClient, Demo) {
     let (client, demo) = driven_as(demo, Grant { classes: vec![SideEffect::NonIdempotent] }).await;
@@ -226,6 +353,93 @@ async fn under_a_fixture_a_non_idempotent_action_is_simulated_and_never_reaches_
     let answer = client.invoke(&invoke).await.expect("an answer");
     assert_eq!(answer, InvokeAnswer::Simulated { action: "chat.send".to_string() });
     assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "a simulated action ran");
+}
+
+#[tokio::test]
+async fn under_a_fixture_an_action_and_input_the_app_declines_are_refused_as_declined_and_run_live() {
+    let declining = Demo { declines: Some("an approval waits for a person".to_string()), ..Demo::default() };
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    let (live, demo) = driven_as(declining.clone(), Grant { classes: vec![SideEffect::NonIdempotent] }).await;
+    assert!(matches!(live.invoke(&invoke).await.expect("an answer"), InvokeAnswer::Done { .. }), "live, nothing is declined");
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 1);
+
+    let (client, demo) = under_a_fixture(Demo { invoked: Arc::default(), ..declining }).await;
+    let InvokeAnswer::Refused(refused) = client.invoke(&invoke).await.expect("an answer") else {
+        panic!("the action was answered");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::Declined, Some("chat.send")));
+    assert_eq!(refused.why, "an approval waits for a person");
+    let PerformAnswer::Refused(refused) = client.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::Declined, Some("ui/input")));
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "a declined action ran");
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "declined input ran");
+}
+
+/// Why the demo ends its fixture.
+const ARRIVED: &str = "an approval arrived for a person";
+
+#[tokio::test]
+async fn a_fixture_the_app_ends_is_told_once_to_its_presenter_and_its_release_names_why() {
+    let (client, demo) = under_a_fixture(Demo::default()).await;
+    demo.end_fixture(ARRIVED);
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    let InvokeAnswer::Refused(refused) = client.invoke(&invoke).await.expect("an answer") else {
+        panic!("the action ran on the live state unannounced");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref(), refused.why.as_str()), (RefusalCode::FixtureEnded, Some("x1"), ARRIVED));
+    assert_eq!(demo.invoked.load(Ordering::Relaxed), 0, "the refused action ran");
+    let answer = client.invoke(&invoke).await.expect("an answer");
+    assert!(matches!(answer, InvokeAnswer::Done { .. }), "told once, the next action runs live: {answer:?}");
+    let answer = client.release(&ReleaseCall { handle: "x1".to_string() }).await.expect("an answer");
+    assert_eq!(answer, ReleaseAnswer::Ended { handle: "x1".to_string(), reason: ARRIVED.to_string() });
+    let answer = client.release(&ReleaseCall { handle: "x9".to_string() }).await.expect("an answer");
+    assert_eq!(answer, ReleaseAnswer::NotStanding { handle: "x9".to_string() }, "a handle that never stood");
+}
+
+/// A session of its own with `endpoint`.
+async fn session(endpoint: &Arc<Endpoint<Demo>>) -> UiClient {
+    let (ours, theirs) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(serve_connection(theirs, Arc::clone(endpoint)));
+    UiClient::open(ours).await.expect("a session")
+}
+
+#[tokio::test]
+async fn only_the_session_that_presented_a_fixture_the_app_ended_hears_it_ended() {
+    let demo = Demo::default();
+    let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
+    let (presenter, other) = (session(&endpoint).await, session(&endpoint).await);
+    let fixture = Fixture::Patch { patch: json!({}) };
+    let call = PresentCall { fixture, fingerprint: shape_pin(&any_shape()), if_match: None };
+    assert!(matches!(presenter.present(&call).await.expect("an answer"), PresentAnswer::Presented { .. }));
+    demo.end_fixture(ARRIVED);
+    let answer = other.perform(&click_at(5.0)).await.expect("an answer");
+    assert_eq!(answer, PerformAnswer::Done { frame: Some("f3".to_string()) }, "a session that presented nothing");
+    let PerformAnswer::Refused(refused) = presenter.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the presenter's sequence ran on the live state unannounced");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref(), refused.why.as_str()), (RefusalCode::FixtureEnded, Some("x1"), ARRIVED));
+    assert_eq!(demo.performed.lock().expect("the lock").len(), 1, "the refused sequence ran");
+}
+
+#[tokio::test]
+async fn a_requester_name_reaches_the_app_and_a_takeover_is_asked_for_the_connection_s_requester() {
+    let demo = Demo { takes_over: Some(false), grants_to: Some("Apollo"), ..Demo::default() };
+    let (ours, theirs) = tokio::io::duplex(64 * 1024);
+    let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
+    tokio::spawn(serve_connection_from(theirs, endpoint, "uid 501 pid 7".to_string()));
+    let client = UiClient::open(ours).await.expect("a session");
+    let named = Perform { requester_name: Some("Apollo".to_string()), ..click_at(1.0) };
+    let answer = client.perform(&named).await.expect("an answer");
+    assert!(matches!(answer, PerformAnswer::Done { .. }), "{answer:?}");
+    assert_eq!(*demo.names.lock().expect("the lock"), vec![Some("Apollo".to_string())]);
+    assert_eq!(*demo.requesters.lock().expect("the lock"), vec!["uid 501 pid 7".to_string()]);
+
+    let answer = client.perform(&Perform { takeover: true, ..named }).await.expect("an answer");
+    let PerformAnswer::Refused(refused) = answer else { panic!("a name won a takeover: {answer:?}") };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::TakeoverNotGranted, Some("uid 501 pid 7")));
+    assert_eq!(*demo.asked.lock().expect("the lock"), vec!["uid 501 pid 7".to_string()]);
 }
 
 #[tokio::test]

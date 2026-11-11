@@ -33,12 +33,16 @@
       layout: asked("layout") ? node(root) : void 0,
       state: asked("state") ? held.read.state : void 0,
       refused,
-      shown: { kind: "live" }
+      shown: held.read.shown ?? { kind: "live" }
     };
   }
 
   // substrate/apps/ui-control-page/src/answer.ts
   var UNDECLARED_EFFECT = "non_idempotent";
+  var DECLINE = Symbol.for("x0k.ui-control.decline");
+  var decline = (reason) => Object.assign(new Error(reason), { reason, [DECLINE]: true });
+  var declined = (value) => typeof value === "object" && value !== null && value[DECLINE] === true;
+  var frameOr = (unpainted, epoch) => unpainted ? { frame: null, unpainted } : { frame: String(epoch) };
   var kept = (name, spec, run) => ({
     offered: { name, description: spec.description ?? "", args: spec.args ?? { kind: "null" }, result: spec.result ?? { kind: "any" }, side_effect: spec.effect ?? UNDECLARED_EFFECT },
     run
@@ -48,13 +52,42 @@
     let declaration = { app: win.location.host || win.document.title || "page" };
     const actions = /* @__PURE__ */ new Map();
     const instance = instanceId();
-    const stateNow = () => {
+    let standing = null;
+    let ended = null;
+    let presented = 0;
+    const listeners = /* @__PURE__ */ new Set();
+    const takesFixtures = () => typeof declaration.state?.present === "function" && typeof declaration.state?.release === "function";
+    const readNow = (head) => {
       const state = declaration.state;
-      return state && { shape: state.shape, value: state.read() ?? null, head: state.head?.() };
+      return state && { shape: state.shape, value: state.read() ?? null, head: head ? state.head?.() : void 0 };
     };
-    const declared = () => ({ app: declaration.app, instance, actions: [...actions.values()].map(({ offered }) => offered), state: stateNow() });
-    const read = (call) => ({ layout: walk2.layout(), state: call.parts.includes("state") ? stateNow() : void 0 });
-    const rendered = () => new Promise((done) => win.requestAnimationFrame(() => done()));
+    const liveNow = () => standing ? standing.live : readNow(true);
+    const showingNow = () => readNow(!standing);
+    const shownNow = () => standing ? { kind: "fixture", handle: standing.handle } : { kind: "live" };
+    const fixture = () => standing?.handle ?? null;
+    const stand = (next) => {
+      const was = fixture();
+      standing = next;
+      if (fixture() === was) return;
+      for (const listener of [...listeners]) {
+        try {
+          listener(fixture());
+        } catch (e) {
+          win.setTimeout(() => {
+            throw e;
+          });
+        }
+      }
+    };
+    const declared = () => ({
+      app: declaration.app,
+      instance,
+      actions: [...actions.values()].map(({ offered }) => offered),
+      state: liveNow(),
+      fixtures: takesFixtures()
+    });
+    const read = (call) => ({ layout: walk2.layout(), shown: shownNow(), state: call.parts.includes("state") ? showingNow() : void 0 });
+    const rendered = () => hold2.rendered();
     const run = async (name, args) => {
       let outcome;
       try {
@@ -64,17 +97,67 @@
       } catch (e) {
         outcome = { reason: e instanceof Error ? e.message : String(e) };
       }
-      await rendered();
-      const frame = String(hold2.epoch());
-      return "result" in outcome ? { done: { result: outcome.result, frame } } : { failed: { reason: outcome.reason, frame } };
+      const frame = frameOr(await rendered(), hold2.epoch());
+      return "result" in outcome ? { done: { result: outcome.result, ...frame } } : { failed: { reason: outcome.reason, ...frame } };
     };
+    const cannotPaint = () => hold2.unpainted() ?? null;
+    const declines = (call) => declaration.declines?.(call) ?? null;
+    const present = async (state) => {
+      if (!takesFixtures()) return { refused: { code: "no_fixtures", subject: "ui/history", why: "the page takes no state fixtures" } };
+      const was = standing;
+      const handle = `${instance}/fixture/${++presented}`;
+      stand({ handle, live: was ? was.live : liveNow() });
+      let answered;
+      try {
+        answered = await declaration.state.present(state);
+      } catch (e) {
+        answered = e;
+        if (!declined(e)) {
+          stand(was);
+          throw e;
+        }
+      }
+      if (declined(answered)) {
+        stand(was);
+        return { refused: { code: "declined", subject: "ui/history", why: answered.reason } };
+      }
+      hold2.changed();
+      return { presented: { handle, ...frameOr(await rendered(), hold2.epoch()) } };
+    };
+    const release = async (handle) => {
+      if (standing?.handle !== handle) return ended?.handle === handle ? { ended: { ...ended } } : { not_standing: { handle } };
+      await declaration.state.release();
+      stand(null);
+      hold2.changed();
+      return { released: frameOr(await rendered(), hold2.epoch()) };
+    };
+    const endFixture = async (reason) => {
+      const handle = standing?.handle;
+      if (handle === void 0) return;
+      await declaration.state.release();
+      if (standing?.handle !== handle) return;
+      ended = { handle, reason };
+      stand(null);
+      hold2.changed();
+      await rendered();
+    };
+    const fixtureEnded = (handle) => ended?.handle === handle ? ended.reason : null;
     const ui = {
       action(name, spec, run_) {
         actions.set(name, kept(name, spec, run_));
         hold2.changed();
         return ui;
       },
-      changed: () => hold2.changed()
+      changed: () => hold2.changed(),
+      fixture,
+      onFixture(listener) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      decline,
+      endFixture
     };
     return {
       install(given) {
@@ -86,6 +169,12 @@
       declared,
       read,
       run,
+      present,
+      release,
+      fixture,
+      cannotPaint,
+      declines,
+      fixtureEnded,
       observation,
       wholeCaptureOnly
     };
@@ -164,12 +253,12 @@
       const palette = declared.colors?.length ? declared.colors : PALETTE;
       el.style.setProperty("--ink", palette[hue % palette.length]);
     };
-    const named = (requester) => {
+    const named = (requester, given) => {
       const names = declared.names ?? {};
       if (requester in names) return names[requester];
       const prefixes = Object.keys(names).filter((key) => key.endsWith("*") && requester.startsWith(key.slice(0, -1)));
       const longest = prefixes.sort((a, b) => b.length - a.length)[0];
-      return longest ? names[longest] : requester;
+      return longest ? names[longest] : given || requester;
     };
     const beside = (label, x, y, down) => {
       const right = x > win.innerWidth - LABEL_ROOM;
@@ -213,7 +302,7 @@
           ink(mark, pointer.hue);
           const name = doc.createElement("div");
           name.className = "label";
-          name.textContent = named(pointer.requester);
+          name.textContent = named(pointer.requester, pointer.name);
           name.style.fontSize = `${size}px`;
           ink(name, pointer.hue);
           beside(name, pointer.at[0] * k, pointer.at[1] * k, 18);
@@ -243,6 +332,8 @@
   // substrate/apps/ui-control-page/src/hold.ts
   var SETTLE_UPDATES = 2;
   var HOLD_LAPSE_MS = 1e3;
+  var FRAME_WAIT_MS = 1e3;
+  var SETTLE_MS = 1e3;
   var INSTALLED = Symbol.for("x0k.ui-control.hold");
   var INPUT_EVENTS = ["pointerdown", "pointerup", "pointermove", "wheel", "keydown", "keyup", "input", "compositionend", "focusin", "focusout"];
   var ANIMATION_EVENTS = ["animationstart", "animationend", "animationcancel", "transitionstart", "transitionend", "transitioncancel"];
@@ -335,8 +426,61 @@
       const step = (left) => left === 0 ? done() : nativeRaf(() => step(left - 1));
       step(n);
     });
+    const HIDDEN = "the page is hidden: document.visibilityState is hidden, as for a minimised, unmapped or covered window";
+    const hiddenNow = () => doc.visibilityState === "hidden" ? HIDDEN : void 0;
+    let stalledAt;
+    const stalled = () => {
+      stalledAt ??= win.performance.now() - FRAME_WAIT_MS;
+      nativeRaf(() => {
+        stalledAt = void 0;
+      });
+    };
+    const unpainted = () => hiddenNow() ?? (stalledAt === void 0 ? void 0 : `no rendering update has come for ${Math.round(win.performance.now() - stalledAt)} ms`);
+    const whilePainting = (wait) => new Promise((done) => {
+      const now = unpainted();
+      if (now) return done(now);
+      let finished = false;
+      const finish = (why) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        doc.removeEventListener("visibilitychange", onVisibility);
+        done(why);
+      };
+      const onVisibility = () => {
+        const why = hiddenNow();
+        if (why) finish(why);
+      };
+      doc.addEventListener("visibilitychange", onVisibility);
+      const timer = setTimeout(() => {
+        stalled();
+        finish(unpainted());
+      }, FRAME_WAIT_MS);
+      wait.then(() => finish(), () => finish());
+    });
+    const rendered = () => whilePainting(new Promise((done) => win.requestAnimationFrame(() => done())));
+    const SETTLE_EVENTS = ["pointermove", "pointerdown", "pointerup", "mousemove", "mousedown", "mouseup", "click", "keydown", "keyup", "input", "wheel"];
+    const settled = async () => {
+      let quiet = 0;
+      const heard = () => {
+        quiet = 0;
+      };
+      for (const kind of SETTLE_EVENTS) win.addEventListener(kind, heard, { capture: true, passive: true });
+      try {
+        const until = win.performance.now() + SETTLE_MS;
+        do {
+          const why = await rendered();
+          if (why) return why;
+          quiet += 1;
+        } while (quiet <= 2 && win.performance.now() < until);
+        return void 0;
+      } finally {
+        for (const kind of SETTLE_EVENTS) win.removeEventListener(kind, heard, { capture: true });
+      }
+    };
     let paused = [];
     let hidDrawn = false;
+    let unheld;
     let lapse;
     const release = () => {
       if (!held) return;
@@ -365,22 +509,24 @@
         }, HOLD_LAPSE_MS);
         paused = doc.getAnimations().filter((a) => a.playState === "running").map((animation) => ({ animation, startTime: animation.startTime }));
         for (const { animation } of paused) animation.pause();
-        await Promise.all(paused.map(({ animation }) => animation.ready));
+        if (paused.length > 0) unheld = await whilePainting(Promise.all(paused.map(({ animation }) => animation.ready)));
       }
       if (options.frameOnly && !hidDrawn) {
         layer.hide(true);
         hidDrawn = true;
       }
-      await updates(SETTLE_UPDATES);
+      const why = unheld ?? await whilePainting(updates(SETTLE_UPDATES));
+      unheld = void 0;
       const epoch2 = epochNow();
-      return { epoch: epoch2, read: read(), holdMs: win.performance.now() - start };
+      const answered = { epoch: epoch2, read: read(), holdMs: win.performance.now() - start };
+      return why ? { ...answered, unpainted: why } : answered;
     };
     const verify = () => {
       const epoch2 = epochNow();
       release();
       return epoch2;
     };
-    const api = { epoch: epochNow, changed: bump, hold: hold2, verify, held: () => held, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
+    const api = { epoch: epochNow, changed: bump, hold: hold2, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
     win[INSTALLED] = api;
     return api;
   }

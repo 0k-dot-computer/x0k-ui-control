@@ -1,0 +1,87 @@
+{
+  "clause": "ui-control-channel §8 to §10, ui-interfaces §4",
+  "check": "refusal.read",
+  "about": "A refusal's code is one of the protocol's words, and no other word reads. The refusals that name a condition of the app or its host read with their subject. The answer is {reads: true, refused} or {reads: false}.",
+  "vectors": [
+    {
+      "name": "cannot_paint reads, naming the action",
+      "input": {
+        "refused": {
+          "code": "cannot_paint",
+          "subject": "chat.send",
+          "why": "the window is minimised"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "cannot_paint",
+          "subject": "chat.send"
+        }
+      }
+    },
+    {
+      "name": "declined reads, naming what was declined",
+      "input": {
+        "refused": {
+          "code": "declined",
+          "subject": "ui/history",
+          "why": "an approval waits for a person"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "declined",
+          "subject": "ui/history"
+        }
+      }
+    },
+    {
+      "name": "undeliverable_source reads, naming the kind",
+      "input": {
+        "refused": {
+          "code": "undeliverable_source",
+          "subject": "touch",
+          "why": "the host cannot deliver touch input"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "undeliverable_source",
+          "subject": "touch"
+        }
+      }
+    },
+    {
+      "name": "fixture_ended reads, naming the fixture's handle",
+      "input": {
+        "refused": {
+          "code": "fixture_ended",
+          "subject": "fixture-3",
+          "why": "an approval arrived for a person"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "fixture_ended",
+          "subject": "fixture-3"
+        }
+      }
+    },
+    {
+      "name": "a word the protocol does not have does not read",
+      "input": {
+        "refused": {
+          "code": "page_unsettled",
+          "why": "the page did not settle"
+        }
+      },
+      "expect": {
+        "reads": false
+      }
+    }
+  ]
+}

@@ -48,6 +48,8 @@ export async function chromium(page: string, script: string, { width, height, ra
     const loaded = cdp.once('Page.loadEventFired');
     await cdp.send('Page.navigate', { url: page.includes('://') ? page : pathToFileURL(page).href });
     await loaded;
+    /** The tab opened in front of the page to hide it, while one is. */
+    let covering: string | undefined;
     return {
       name: `chromium at ratio ${ratio}`,
       version,
@@ -57,6 +59,11 @@ export async function chromium(page: string, script: string, { width, height, ra
         return r.result.value;
       },
       capture: async () => pngImage(Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png' })).data, 'base64')),
+      hide: async () => { covering ??= (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId; },
+      show: async () => {
+        if (covering) await cdp.send('Target.closeTarget', { targetId: covering });
+        covering = undefined;
+      },
       close: async () => { cdp.close(); await browser.stop(); },
     };
   } catch (e) {

@@ -429,7 +429,8 @@ impl Session {
             }
         };
         let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let reading = tokio::spawn(read_answers(reader, Arc::clone(&waiting), Arc::clone(&subscribed), Arc::clone(&ended)));
+        let ending = ConnectionEnded { waiting: Arc::clone(&waiting), subscribed: Arc::clone(&subscribed), ended: Arc::clone(&ended) };
+        let reading = tokio::spawn(read_answers(reader, ending));
         let frame_cap = policy.frame_cap;
         Ok((Session { frames, frame_cap, waiting, agreement: agreement.clone(), subscribed, ended, reading, writing }, agreement))
     }
@@ -538,11 +539,12 @@ impl Drop for Session {
 }
 
 /// Hand each answer read off `reader` to the call its id names and each
-/// wake to the subscription its id names, then, when the connection ends,
-/// answer every call still waiting unknown and end every subscription.
-async fn read_answers<R: AsyncRead + Unpin>(
-    mut reader: FrameReader<R>, waiting: Waiting, subscribed: Subscribed, ended: Arc<std::sync::atomic::AtomicBool>,
-) {
+/// wake to the subscription its id names, then, when the reading stops,
+/// answer every call still waiting unknown and end every subscription
+/// (`ending`). It is an argument, held by the reader's task from its
+/// spawning, so a task cancelled before it first runs drops it too.
+async fn read_answers<R: AsyncRead + Unpin>(mut reader: FrameReader<R>, ending: ConnectionEnded) {
+    let (waiting, subscribed) = (&ending.waiting, &ending.subscribed);
     loop {
         let frame = match reader.next().await {
             Ok(Some(frame)) => frame,
@@ -574,12 +576,27 @@ async fn read_answers<R: AsyncRead + Unpin>(
         let answer = answer_said(frame);
         let _ = slot.send(answer);
     }
-    ended.store(true, std::sync::atomic::Ordering::SeqCst);
-    let unanswered: Vec<_> = waiting.lock().unwrap_or_else(PoisonError::into_inner).drain().collect();
-    for (call, slot) in unanswered {
-        let _ = slot.send(Err(CallFault::Unknown { call }));
+}
+
+/// What a session's reading stopping does, however it stops: its connection
+/// ending, or its task cancelled with the runtime that ran it. The session
+/// reads ended, every call still waiting is answered unknown, and every
+/// subscription ends, so no call waits on a reader that is gone.
+struct ConnectionEnded {
+    waiting: Waiting,
+    subscribed: Subscribed,
+    ended: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for ConnectionEnded {
+    fn drop(&mut self) {
+        self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+        let unanswered: Vec<_> = self.waiting.lock().unwrap_or_else(PoisonError::into_inner).drain().collect();
+        for (call, slot) in unanswered {
+            let _ = slot.send(Err(CallFault::Unknown { call }));
+        }
+        self.subscribed.lock().unwrap_or_else(PoisonError::into_inner).clear();
     }
-    subscribed.lock().unwrap_or_else(PoisonError::into_inner).clear();
 }
 
 /// How a caller reaches its callee again: a new connection each time.
@@ -912,6 +929,61 @@ mod tests {
         let answer = within("the call on the ended connection", session.call(Ask::new("cut", "test.sleep", EffectCeiling::ReadOnly, ms(0)))).await;
         assert_eq!(ending.await.unwrap(), "cut", "the call was sent");
         assert_eq!(answer, Err(CallFault::Unknown { call: "cut".to_string() }));
+    }
+
+    /// A call waiting on a callee that stays connected and silent is answered
+    /// unknown once the session's reading is cancelled, as a runtime shutting
+    /// down cancels it, and the session reads ended: no call outlives its reader.
+    #[tokio::test]
+    async fn a_call_waiting_when_its_reader_is_cancelled_is_answered_unknown() {
+        let (near, far) = tokio::net::UnixStream::pair().unwrap();
+        let (sent, heard) = oneshot::channel();
+        let silent = tokio::spawn(async move {
+            let (reader, writer) = tokio::io::split(far);
+            let (frames, queued) = mpsc::channel(8);
+            let _writing = tokio::spawn(write_frames(writer, queued));
+            let mut reader = FrameReader::new(reader, DEFAULT_FRAME_CAP);
+            agree_as_callee(&mut reader, &frames, &plain()).await.unwrap();
+            let _ = sent.send(reader.next().await.unwrap().unwrap().call);
+            std::future::pending::<()>().await;
+        });
+        let (session, _) = within("the opening", Session::open(near, SessionPolicy::DEFAULT, &plain())).await.unwrap();
+        let session = Arc::new(session);
+        let asking = {
+            let session = Arc::clone(&session);
+            tokio::spawn(async move { session.call(Ask::new("held", "test.sleep", EffectCeiling::ReadOnly, ms(0))).await })
+        };
+        assert_eq!(within("the call heard", heard).await.unwrap(), "held");
+        session.reading.abort();
+        let answer = within("the call once its reader is cancelled", asking).await.unwrap();
+        assert_eq!(answer, Err(CallFault::Unknown { call: "held".to_string() }));
+        assert!(session.ended(), "the session reads ended");
+        silent.abort();
+    }
+
+    /// A call waiting before the session's reader has first run is answered
+    /// unknown when that reader is cancelled unrun, as a runtime shutting down
+    /// cancels a task it never polled: the reader's task holds what ends its
+    /// calls from its spawning.
+    #[tokio::test]
+    async fn a_call_waiting_before_its_reader_first_runs_is_answered_unknown_when_the_reader_is_cancelled() {
+        let (near, far) = tokio::net::UnixStream::pair().unwrap();
+        let silent = tokio::spawn(async move {
+            let (reader, writer) = tokio::io::split(far);
+            let (frames, queued) = mpsc::channel(8);
+            let _writing = tokio::spawn(write_frames(writer, queued));
+            let mut reader = FrameReader::new(reader, DEFAULT_FRAME_CAP);
+            agree_as_callee(&mut reader, &frames, &plain()).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let (session, _) = within("the opening", Session::open(near, SessionPolicy::DEFAULT, &plain())).await.unwrap();
+        let (slot, answered) = oneshot::channel();
+        session.waiting.lock().unwrap().insert("early".to_string(), slot);
+        session.reading.abort();
+        let answer = within("the call once its unrun reader is cancelled", answered).await;
+        assert!(matches!(&answer, Ok(Err(CallFault::Unknown { call })) if call == "early"), "answered unknown under its id");
+        assert!(session.ended(), "the session reads ended");
+        silent.abort();
     }
 
     #[tokio::test]

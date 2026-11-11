@@ -3,7 +3,7 @@
 ```turtle folio:document
 implementation:ui-control\/tauri-plugin a x0k:Implementation ;
     x0k:status "draft" ;
-    x0k:summary "A Tauri 2 plugin that is the host of the webview design for a Tauri app on Linux and macOS: it injects the in-page library's hold before the page's scripts, asks the page over Tauri's IPC with a fresh nonce per request and drops any answer without it, and takes the capture natively while the page is held, with webkit_web_view_get_snapshot on Linux and WKWebView's takeSnapshot on macOS. It puts input into the page through the platform's own input path, as GDK events synthesized for the webview's widget on Linux and as NSEvents handed to the WKWebView on macOS, so the page's hit-testing and focus decide the target and its events are trusted. It serves the page as the app's UI-control endpoint with x0k-ui-endpoint, whose checks run before the page hears a call, on a socket named for the app in its profile's runtime directory by the rule every endpoint binds by, so a scratch app never binds in the live runtime. The library's probe test, an input test and the conformance suite over the endpoint hold it against a minimal Tauri app, under Xvfb on Linux and in a window on the Mac's display." ;
+    x0k:summary "A Tauri 2 plugin that is the host of the webview design for a Tauri app on Linux and macOS: it injects the in-page library's hold before the page's scripts, asks the page over Tauri's IPC with a fresh nonce per request and drops any answer without it, and takes the capture natively while the page is held, with webkit_web_view_get_snapshot on Linux and WKWebView's takeSnapshot on macOS. It puts input into the page through the platform's own input path, as GDK events synthesized for the webview's widget on Linux and as NSEvents handed to the WKWebView on macOS, so the page's hit-testing and focus decide the target and its events are trusted. It serves the page as the app's UI-control endpoint with x0k-ui-endpoint, whose checks run before the page hears a call, and forwards a state fixture's present and release to the page's own hooks, answering the first frame painted after each, on a socket named for the app in its profile's runtime directory by the rule every endpoint binds by, so a scratch app never binds in the live runtime. The library's probe test, an input test and the conformance suite over the endpoint hold it against a minimal Tauri app, under Xvfb on Linux and in a window on the Mac's display." ;
     x0k:concerns "ui-control", "webview", "tauri", "hold", "input", "conformance" ;
     x0k:cites implementation:ui-control\/webview,
         implementation:ui-control\/page-hold,
@@ -13,7 +13,8 @@ implementation:ui-control\/tauri-plugin a x0k:Implementation ;
         implementation:ui-control\/page-answer,
         implementation:ui-control\/conformance ;
     x0k:implements architecture:ui-control-channel ;
-    x0k:motivatedBy intent:67a00012-0009-6395-2b5e-7b73ef62d5c2 ;
+    x0k:motivatedBy intent:67a00012-0009-6395-2b5e-7b73ef62d5c2,
+        intent:b4de1cf5-62fd-ceb0-23bb-296fbbff0be4 ;
     folio:tangleCrate "crates/x0k-ui-tauri" ;
     folio:tangleRoot "src/lib.rs" .
 ```
@@ -69,11 +70,29 @@ These are the webview design's §2 and §6, as this plugin keeps them:
 - The endpoint is a socket named for the app in its profile's runtime
   directory, by the rule every UI-control endpoint binds by
   (`x0k_ui_endpoint::address`). A scratch process never resolves into the live
-  root's runtime, whatever the environment pins.
+  root's runtime, whatever the environment pins. An app that gives the plugin
+  the socket's path, `ui_plugin_at`, is served at that path and nowhere else,
+  and the plugin reads no environment and no profile to place it.
 - The endpoint's checks run before the page hears a call: a call the offer does
   not list never reaches the page.
 - The requester of a call is the socket peer's credentials, never the page's
   word.
+- A page that takes state fixtures is offered with `ui/history`, which names
+  no past position and says it takes fixtures. The endpoint makes
+  `ui-interfaces` §4's checks before the page hears `present`; neither the
+  plugin nor the page makes them again.
+- `present` and `release` answer the first frame painted after the page's own
+  hook, as an action does.
+- What the page shows is the library's `fixture()`, so while a fixture stands
+  the endpoint answers each driver action by the offer's replay policy, and a
+  `non_idempotent` one is never run.
+- A fixture the page ends itself, `ui.endFixture(reason)`, is answered to the
+  endpoint's `fixture_ended` hook from the library's `fixtureEnded(handle)`,
+  so the driver that presented it is refused its next call as
+  `fixture_ended` with the page's reason, and its `release` answers `ended`.
+- A driver's input is labelled with the name its sequence gives,
+  `requester_name`, unless the page's look names that requester; the name is
+  a label and never authority, and the colour stays the requester's.
 
 **Cost bound.** The hold costs at most 100 ms at the 90th percentile on the
 probe page, the library's bound.
@@ -102,7 +121,7 @@ command and permission names, from the package name, so the plugin is
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-tauri"
-version = "0.1.0"
+version = "0.2.0"
 edition = { workspace = true }
 license = "MIT"
 description = "A Tauri plugin that holds a Tauri app's page still and captures it natively, for the UI-control endpoint."
@@ -124,11 +143,13 @@ uuid = { version = "1", features = ["v4"] }
 
 # The endpoint the plugin serves, the checks it makes before the page hears a
 # call, and where the endpoint binds.
-x0k-ui-endpoint = { path = "../x0k-ui-endpoint", version = "0.1.0" }
+x0k-ui-endpoint = { path = "../x0k-ui-endpoint", version = "0.2.0" }
 # The profile this process runs, which the endpoint's directory is named for.
 x0k-runtime-dir = { path = "../x0k-runtime-dir", version = "0.1.0" }
 # The protocol's values, which the endpoint and the page both speak.
-x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.1.0" }
+x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.2.0" }
+# The spelling of the page's state shape, which the endpoint's fixture checks read.
+x0k-datum = { version = "0.1.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # WebKitGTK's snapshot, the cairo surface it answers, and that surface's PNG.
@@ -146,7 +167,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGEvent", "CGEventSource", "CGEventTypes", "CGImage", "CGRemoteOperation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSProcessInfo", "NSString"] }
-objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKSnapshotConfiguration", "WKWebView"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKPreferences", "WKSnapshotConfiguration", "WKWebView", "WKWebViewConfiguration"] }
 
 [build-dependencies]
 tauri-plugin = { version = "2.7", features = ["build"] }
@@ -179,11 +200,20 @@ mod snapshot;
 #[cfg(target_os = "macos")]
 #[path = "snapshot_macos.rs"]
 mod snapshot;
+#[cfg(target_os = "macos")]
+#[path = "painting_macos.rs"]
+mod painting;
+/// WebKitGTK has no switch that keeps a covered window painting, so there is
+/// nothing to turn.
+#[cfg(not(target_os = "macos"))]
+mod painting {
+    pub(crate) fn keep_painting<R: tauri::Runtime>(_webview: &tauri::Webview<R>, _on: bool) {}
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use endpoint::{PageApp, HELD_FRAMES, UI_GLOBAL};
 pub use held::{held_capture, Held, HeldCapture, HoldingHost, Refused, HOLD_TRIES};
-pub use page::{endpoint_socket_path, ui_plugin, PageError, PageHold, PageHost, Pending, PAGE_GLOBAL, PAGE_SCRIPT, PLUGIN};
+pub use page::{endpoint_socket_path, ui_plugin, ui_plugin_at, ui_plugin_with, CoveredPainting, PageError, PageHold, PageHost, Pending, PAGE_GLOBAL, PAGE_SCRIPT, PLUGIN};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use snapshot::Snapshot;
 ```
@@ -220,6 +250,9 @@ pub struct Held<R> {
     pub epoch: u64,
     pub read: R,
     pub hold_ms: f64,
+    /// Why the page could not paint while it was held, when it could not.
+    #[serde(default)]
+    pub unpainted: Option<String>,
 }
 
 /// What a host does to a page around one capture.
@@ -243,6 +276,9 @@ could not produce is refused by name, and the read is kept.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Refused {
     pub part: &'static str,
+    /// The protocol's word for why, when one says it: `cannot_paint`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<&'static str>,
     pub why: String,
 }
 
@@ -264,7 +300,13 @@ pub struct HeldCapture<R, C> {
 
 A failed hold or verify is a page that did not answer, and the observation
 fails with it. A failed capture is the platform's refusal, and only the capture
-part is refused.
+part is refused. A hold that answers the page could not paint, hidden or with
+no rendering update within the library's `FRAME_WAIT_MS`, is not captured: the
+host verifies, which releases the page, and refuses the capture as
+`cannot_paint` with the page's reason, as the library's loop does
+(`x0k:implementation/ui-control/page-hold`, "When the page cannot paint"). A
+snapshot of a view that does not present would show what it last painted, or
+wait on a paint that never comes.
 
 <a name="chunk-held-loop"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#held-loop`</sub>
 
@@ -279,9 +321,14 @@ pub async fn held_capture<H: HoldingHost>(host: &mut H, tries: usize) -> Result<
     for _ in 0..tries.max(1) {
         let held = host.hold().await?;
         hold_ms.push(held.hold_ms);
+        if let Some(why) = held.unpainted {
+            host.verify().await?;
+            let refused = Some(Refused { part: "capture", code: Some("cannot_paint"), why });
+            return Ok(HeldCapture { frame: held.epoch.to_string(), read: held.read, capture: None, refused, hold_ms });
+        }
         let capture = host.capture().await;
         let after = host.verify().await?;
-        let refuse = |why: String| Some(Refused { part: "capture", why });
+        let refuse = |why: String| Some(Refused { part: "capture", code: None, why });
         match capture {
             Err(failure) => {
                 let refused = refuse(format!("capture failed: {failure}"));
@@ -295,15 +342,16 @@ pub async fn held_capture<H: HoldingHost>(host: &mut H, tries: usize) -> Result<
         last = Some(held);
     }
     let last = last.expect("the loop ran at least once");
-    let refused = Some(Refused { part: "capture", why: format!("page_unsettled: epochs {}", seen.join(", ")) });
+    let refused = Some(Refused { part: "capture", code: None, why: format!("page_unsettled: epochs {}", seen.join(", ")) });
     Ok(HeldCapture { frame: last.epoch.to_string(), read: last.read, capture: None, refused, hold_ms })
 }
 ```
 
-Three tests pin the rule with a scripted page whose epoch moves on cue: a
-moved epoch is held again, a page that never settles is refused by name, and a
+Four tests pin the rule with a scripted page whose epoch moves on cue: a
+moved epoch is held again, a page that never settles is refused by name, a
 failed capture is refused with the platform's reason after the page is
-released.
+released, and a page that could not paint is refused as `cannot_paint`, never
+captured, and released.
 
 <a name="chunk-held-tests"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#held-tests`</sub>
 
@@ -313,16 +361,17 @@ mod tests {
     use super::*;
 
     /// A page whose epoch after each capture is the next of `after`, held at 7.
-    struct Scripted { after: Vec<u64>, capture_fails: bool, verified: usize }
+    struct Scripted { after: Vec<u64>, capture_fails: bool, verified: usize, unpainted: Option<String>, captured: usize }
 
     impl HoldingHost for Scripted {
         type Read = &'static str;
         type Capture = &'static str;
         type Error = String;
         async fn hold(&mut self) -> Result<Held<&'static str>, String> {
-            Ok(Held { epoch: 7, read: "read", hold_ms: 1.0 })
+            Ok(Held { epoch: 7, read: "read", hold_ms: 1.0, unpainted: self.unpainted.clone() })
         }
         async fn capture(&mut self) -> Result<&'static str, String> {
+            self.captured += 1;
             if self.capture_fails { Err("no surface".into()) } else { Ok("pixels") }
         }
         async fn verify(&mut self) -> Result<u64, String> {
@@ -333,14 +382,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_moved_epoch_is_held_again_and_a_still_one_answers() {
-        let mut page = Scripted { after: vec![8, 7], capture_fails: false, verified: 0 };
+        let mut page = Scripted { after: vec![8, 7], capture_fails: false, verified: 0, unpainted: None, captured: 0 };
         let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
         assert_eq!((held.frame.as_str(), held.capture, held.refused, held.hold_ms.len()), ("7", Some("pixels"), None, 2));
     }
 
     #[tokio::test]
     async fn a_page_that_never_settles_is_refused_as_unsettled_with_its_read() {
-        let mut page = Scripted { after: vec![8, 9, 10], capture_fails: false, verified: 0 };
+        let mut page = Scripted { after: vec![8, 9, 10], capture_fails: false, verified: 0, unpainted: None, captured: 0 };
         let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
         assert_eq!(held.refused.unwrap().why, "page_unsettled: epochs 7→8, 7→9, 7→10");
         assert_eq!((held.read, held.capture), ("read", None));
@@ -348,10 +397,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_capture_is_refused_with_its_reason_after_the_page_is_released() {
-        let mut page = Scripted { after: vec![7], capture_fails: true, verified: 0 };
+        let mut page = Scripted { after: vec![7], capture_fails: true, verified: 0, unpainted: None, captured: 0 };
         let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
         assert_eq!(held.refused.unwrap().why, "capture failed: no surface");
         assert_eq!(page.verified, 1);
+    }
+
+    #[tokio::test]
+    async fn a_page_that_could_not_paint_is_refused_as_cannot_paint_uncaptured_and_released() {
+        let mut page = Scripted { after: vec![7], capture_fails: false, verified: 0, unpainted: Some("the page is hidden".into()), captured: 0 };
+        let held = held_capture(&mut page, HOLD_TRIES).await.unwrap();
+        assert_eq!(held.refused, Some(Refused { part: "capture", code: Some("cannot_paint"), why: "the page is hidden".into() }));
+        assert_eq!((held.read, held.capture, page.captured, page.verified), ("read", None, 0, 1));
     }
 }
 ```
@@ -567,6 +624,8 @@ pub struct PageHost<R: Runtime> {
     webview: Webview<R>,
     /// What the host draws of drivers' input over this page.
     presentation: Shared,
+    /// The name each requester's latest sequence gives it, which its label shows.
+    names: Names,
     /// Whether a task is fading the drawing.
     fading: Arc<AtomicBool>,
     /// The view's width in its own units, as the last capture measured it,
@@ -576,7 +635,7 @@ pub struct PageHost<R: Runtime> {
 
 impl<R: Runtime> PageHost<R> {
     pub fn new(webview: Webview<R>) -> Self {
-        Self { webview, presentation: Shared::default(), fading: Arc::default(), units: Arc::default() }
+        Self { webview, presentation: Shared::default(), names: Names::default(), fading: Arc::default(), units: Arc::default() }
     }
 
     <<page-drawing>>
@@ -587,6 +646,26 @@ impl<R: Runtime> PageHost<R> {
     }
 
     <<evaluate>>
+
+    /// Why the page cannot paint now, when it cannot: its window is minimised
+    /// or hidden, as the window itself says, or the page says it cannot
+    /// (the library's `unpainted()`), as for a window WebKit counts as covered.
+    pub async fn cannot_paint(&self) -> Option<String> {
+        let window = self.webview.window();
+        if window.is_minimized().unwrap_or(false) {
+            return Some("the window is minimised".to_string());
+        }
+        if !window.is_visible().unwrap_or(true) {
+            return Some("the window is hidden".to_string());
+        }
+        match self.evaluate(&format!("return JSON.stringify(globalThis.{PAGE_GLOBAL}.unpainted() ?? null);")).await {
+            Ok(answer) => serde_json::from_str(&answer).unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.page.paint_unanswered");
+                None
+            }
+        }
+    }
 
     /// The platform's capture of the page as it shows now.
     pub async fn snapshot(&self) -> Result<Snapshot, PageError> {
@@ -677,7 +756,31 @@ library's `Declaration`, `ActionSpec` and `Ui` in its `src/answer.ts`
 
 When the first page of the webview labelled `webview` has loaded, the plugin
 serves that webview as the app's endpoint, on the unix socket named for `app`
-in the profile's runtime directory (`endpoint_socket_path`, below).
+in the profile's runtime directory (`endpoint_socket_path`, below). An app
+that places its endpoint itself gives the plugin the socket's path,
+`ui_plugin_at(path, webview, covered)`, and the plugin binds there and nowhere
+else. It reads no environment variable and no profile for it, so an app that
+binds one endpoint per instance under its own state directory needs neither
+`X0K_UI_CONTROL_ENDPOINT_DIR` nor x0k's profile. The path's directory is made
+if it is missing, and a socket left there by an app that has gone is
+replaced, as at the default path.
+
+**What an app adds.** An app adds the plugin to its builder, and its window's
+capability grants the plugin's default permission, `x0k-ui-tauri:default`:
+
+```text
+tauri::Builder::default()
+    .plugin(x0k_ui_tauri::ui_plugin("chariot", "main"))
+    // or, one endpoint per instance under the app's own state directory:
+    .plugin(x0k_ui_tauri::ui_plugin_at(state_dir.join("ui-control.endpoint"), "main", CoveredPainting::default()))
+```
+
+Its page installs the library (`globalThis.__x0kUi.install`), declares its
+actions and its state, and may take state fixtures, decline a call while one
+stands, and end one itself with `ui.endFixture(reason)`
+(`x0k:implementation/ui-control/page-answer`). A driver that names itself in
+`requester_name` is labelled so over the window, unless the page's look names
+it first.
 
 <a name="chunk-plugin"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#plugin`</sub>
 
@@ -685,12 +788,42 @@ in the profile's runtime directory (`endpoint_socket_path`, below).
 /// The in-page library as a classic script: its `pageScript()`, carried.
 pub const PAGE_SCRIPT: &str = include_str!("../page-script.js");
 
+/// When the plugin keeps a covered window painting, by the macOS host's two
+/// switches ("Keeping a covered window painting", below). Elsewhere there is
+/// no switch, and each is the same.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CoveredPainting {
+    /// While a driver is connected to the endpoint: on when the first one
+    /// connects, and WebKit's own policy back when the last one leaves.
+    #[default]
+    WhileDriven,
+    /// From when the webview is made, for its life, for an app that is
+    /// remote-controlled from its start.
+    FromCreation,
+    /// Never: WebKit's own policy throughout.
+    Off,
+}
+
 /// The plugin: the in-page library injected before the page's own scripts in
 /// the main frame of every page. Once the webview labelled `webview` has loaded
 /// its first page, the plugin serves it as the app's UI-control endpoint on the
-/// unix socket [`endpoint_socket_path`] names for `app`.
+/// unix socket [`endpoint_socket_path`] names for `app`. A covered window
+/// keeps painting while a driver is connected.
 pub fn ui_plugin<R: Runtime>(app: &str, webview: impl Into<String>) -> TauriPlugin<R> {
-    let (endpoint, label, served) = (endpoint_socket_path(app), webview.into(), AtomicBool::new(false));
+    ui_plugin_with(app, webview, CoveredPainting::default())
+}
+
+/// The plugin, keeping a covered window painting as `covered` says.
+pub fn ui_plugin_with<R: Runtime>(app: &str, webview: impl Into<String>, covered: CoveredPainting) -> TauriPlugin<R> {
+    ui_plugin_at(endpoint_socket_path(app), webview, covered)
+}
+
+/// The plugin, serving its endpoint on the unix socket at `endpoint` and
+/// nowhere else, keeping a covered window painting as `covered` says. It reads
+/// no environment and no profile to place the socket.
+pub fn ui_plugin_at<R: Runtime>(endpoint: impl Into<PathBuf>, webview: impl Into<String>, covered: CoveredPainting) -> TauriPlugin<R> {
+    let (endpoint, label, served) = (endpoint.into(), webview.into(), AtomicBool::new(false));
+    let made = label.clone();
     Builder::new(PLUGIN)
         .js_init_script(PAGE_SCRIPT.to_string())
         .invoke_handler(tauri::generate_handler![page_answer])
@@ -698,14 +831,20 @@ pub fn ui_plugin<R: Runtime>(app: &str, webview: impl Into<String>) -> TauriPlug
             app.manage(Pending::default());
             Ok(())
         })
+        .on_webview_ready(move |webview| {
+            if covered == CoveredPainting::FromCreation && webview.label() == made {
+                crate::painting::keep_painting(&webview, true);
+            }
+        })
         .on_page_load(move |webview, payload| {
             let first = payload.event() == PageLoadEvent::Finished && webview.label() == label && !served.swap(true, Ordering::SeqCst);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             if first {
-                tauri::async_runtime::spawn(crate::endpoint::serve(endpoint.clone(), webview.clone()));
+                let driven = covered == CoveredPainting::WhileDriven;
+                tauri::async_runtime::spawn(crate::endpoint::serve(endpoint.clone(), webview.clone(), driven));
             }
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            let _ = (first, &endpoint);
+            let _ = (first, &endpoint, covered);
         })
         .build()
 }
@@ -817,6 +956,8 @@ const FADE_STEP: Duration = Duration::from_millis(50);
 
 /// What a page's host draws of drivers' input, shared with the task that fades it.
 type Shared = Arc<Mutex<InputPresentation>>;
+/// The name each requester gives itself (`Perform::requester_name`), by requester.
+type Names = Arc<Mutex<HashMap<String, String>>>;
 
 <<page-error>>
 
@@ -994,14 +1135,19 @@ sends the page one mouse event and one key event at a time, each when the page
 has handled the last. A request to the page travels beside that queue, not in
 it, so it can overtake input still waiting there. Measured on arca: two
 rendering updates after six typed characters, the field held three. So when the
-last tick has been delivered, the plugin asks the page to listen for input and
-answer when two rendering updates have passed with none arriving, or after a
-second at most. It answers the page's epoch then, so an observation after it
-sees what the input did.
+last tick has been delivered, the plugin asks the library's `settled()`,
+which listens for input and answers when rendering updates have passed with
+none arriving, or after a second at most
+(`x0k:implementation/ui-control/page-hold`, "When the page cannot paint"). It
+answers the page's epoch then, so an observation after it sees what the input
+did. A page that is or becomes hidden ends the settle at once with its
+reason; the plugin then answers no frame, since none shows what the input did,
+and the driver's next call is refused as `cannot_paint`.
 
-Only `mouse`, `key` and `wheel` sources are delivered. A `pen` or a `touch`
-source is refused by name before any of the sequence runs, so the endpoint can
-leave them out of its offer.
+Only `mouse`, `key` and `wheel` sources are delivered. The plugin names them to
+the endpoint (`delivers`, below), which refuses a `pen` or a `touch` source as
+`undeliverable_source` before any of the sequence runs; the plugin's own
+input path refuses them by name too.
 
 `perform` is what the endpoint calls with a sequence `check_perform` has
 passed: the sequence, the positions `check_perform` resolved for it, and the
@@ -1012,15 +1158,17 @@ scale of the capture its frame names.
 ```rust {#perform}
 /// Deliver `perform` into the page through the platform's input path, drawn
 /// for `requester` over the window as it lands, and answer the page's epoch
-/// once its input has settled. `resolved` is what `check_perform` answered for
+/// once its input has settled, or `None` when the page could not paint the
+/// frame that shows it. `resolved` is what `check_perform` answered for
 /// it, in the frame's capture pixels, and `scale` is that frame's capture's
 /// pixels per widget unit (`Snapshot::scale`).
-pub async fn perform(&self, requester: &str, perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<u64, PageError> {
+pub async fn perform(&self, requester: &str, perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<Option<u64>, PageError> {
     #[cfg(target_os = "linux")]
     let ticks = crate::input::gdk_ticks(perform, resolved, scale)?;
     #[cfg(target_os = "macos")]
     let ticks = crate::input::appkit_ticks(perform, resolved, scale)?;
     let shown = x0k_ui_protocol::input::ticks(perform, resolved, scale)?;
+    self.named(requester, perform.requester_name.as_deref());
     let watchable = perform.presented() && perform.pace == Pace::Watchable;
     let mut last = HashMap::new();
     for (tick, events) in ticks.into_iter().zip(&shown) {
@@ -1043,30 +1191,28 @@ pub async fn perform(&self, requester: &str, perform: &Perform, resolved: &[Reso
     if perform.presented() {
         self.keep_fading();
     }
-    let epoch = self.evaluate(&format!("{SETTLE} return String(globalThis.{PAGE_GLOBAL}.epoch());")).await?;
-    epoch.parse().map_err(|_| PageError::Malformed(epoch))
+    let body = format!("const hold = globalThis.{PAGE_GLOBAL}; const unpainted = await hold.settled(); return JSON.stringify({{ epoch: hold.epoch(), unpainted: unpainted ?? null }});");
+    let settled: Settled = serde_json::from_str(&self.evaluate(&body).await?).map_err(|e| PageError::Malformed(e.to_string()))?;
+    match settled.unpainted {
+        Some(why) => {
+            tracing::info!(%why, epoch = settled.epoch, "ui_tauri.input.unpainted");
+            Ok(None)
+        }
+        None => Ok(Some(settled.epoch)),
+    }
 }
 ```
 
 <a name="chunk-settle"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#settle`</sub>
 
 ```rust {#settle}
-/// A request body that waits until the page has handled the input still
-/// queued for it: two rendering updates with no input event, or a second.
-const SETTLE: &str = "await new Promise((settled) => {
-  const kinds = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
-  const heard = () => { quiet = 0; };
-  const until = performance.now() + 1000;
-  let quiet = 0;
-  for (const kind of kinds) addEventListener(kind, heard, { capture: true, passive: true });
-  const frame = () => {
-    quiet += 1;
-    if (quiet <= 2 && performance.now() < until) return void requestAnimationFrame(frame);
-    for (const kind of kinds) removeEventListener(kind, heard, { capture: true });
-    settled();
-  };
-  requestAnimationFrame(frame);
-});";
+/// What the library's settle answers: the epoch then, and why the page could
+/// not paint, when it could not.
+#[derive(serde::Deserialize)]
+struct Settled {
+    epoch: u64,
+    unpainted: Option<String>,
+}
 ```
 
 A sequence first becomes the protocol's ticks at the capture's scale, and each
@@ -1099,7 +1245,7 @@ pub(crate) struct Tick {
 const PIXELS_PER_LINE: f64 = 40.0;
 
 /// The source kinds GDK delivers into WebKitGTK.
-const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
+pub(crate) const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
 
 /// `perform` as ticks of events in the widget's units, or why none of it may run.
 pub(crate) fn gdk_ticks(perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<Vec<Tick>, PageError> {
@@ -1539,7 +1685,7 @@ pub(crate) struct Tick {
 }
 
 /// The source kinds AppKit delivers into a WKWebView: it takes no touch or pen.
-const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
+pub(crate) const DELIVERED: &[&str] = &["mouse", "key", "wheel"];
 
 /// `perform` as ticks of events in view points, or why none of it may run.
 pub(crate) fn appkit_ticks(perform: &Perform, resolved: &[Resolved], scale: f64) -> Result<Vec<Tick>, PageError> {
@@ -1867,6 +2013,131 @@ use crate::page::PageError;
 <<mac-input-tests>>
 ```
 
+### Keeping a covered window painting
+
+WebKit on macOS counts a window as hidden when it is covered by another,
+minimised, off screen or on another Space. The page's
+`document.visibilityState` then reads `hidden` and its animation frames stop
+until the window comes forward, so before the library bounded its waits, an
+observation and an action of a covered window waited out the plugin's 5 s and
+failed. The snapshot itself is not the cause: `takeSnapshot` answers whenever
+the page paints, with no Screen Recording grant. This is chariot's research of
+2026-11-10, from the projects listed below, and none of it is measured on
+x0k's Mac yet.
+
+Two switches keep a covered window painting. Both are needed (reported):
+
+1. **`-[WKWebView _setWindowOcclusionDetectionEnabled:NO]`**, private. WebKit
+   then stops counting a covered window as hidden, so the page keeps painting
+   and its frames run. One project measured 0 frames a second for a fully
+   covered window before and 62 after; another reports the same for a window
+   on another Space. One report says it takes effect only if set before the
+   view joins its window.
+2. **`WKPreferences.inactiveSchedulingPolicy = .none`**, public from macOS
+   14. It stops WebKit suspending a hidden page's process; one report saw
+   the default policy stop a hidden page after a few minutes. It does not
+   restart animation frames by itself. Its header says it governs a web view
+   "inactive and detached from the view hierarchy". Tauri's
+   `backgroundThrottling: "disabled"` sets it through wry when the window is
+   made.
+
+The plugin turns both on while a driver is connected to the endpoint, and
+gives WebKit its own policy back when the last driver leaves
+(`CoveredPainting::WhileDriven`, the default). Since the first switch may
+take effect only before the view joins its window, an app that is driven from
+its start can ask for both from when its webview is made, for its life,
+with `ui_plugin_with(app, label, CoveredPainting::FromCreation)`; the plugin
+sets them as Tauri hands it the new webview, which is the earliest a plugin is
+told of it. Which of the two works is the Mac's to measure (below, "What is
+shown, and what is open"). `CoveredPainting::Off` leaves WebKit's policy
+alone.
+
+The private selector is guarded: the plugin sends it only to a view that
+answers it, and logs whether it did, so a WebKit without it costs nothing but
+the switch. A test on macOS fails if `WKWebView` stops answering it, so a
+WebKit update that drops it reads red rather than as covered windows going
+silent again. The policy is set only on preferences that answer its setter,
+which is macOS 14 and later. On switching off, the plugin turns occlusion
+detection back on, WebKit's default, and puts back the policy it found.
+
+What still cannot paint, a minimised window, a locked screen, a sleeping
+display, is refused as `cannot_paint` at once: the window's own state, or the
+library's word that the page is hidden.
+
+<a name="chunk-mac-painting"></a><sub>[`src/painting_macos.rs`](../../crates/x0k-ui-tauri/src/painting_macos.rs) · `#mac-painting`</sub>
+
+```rust {#mac-painting file="src/painting_macos.rs"}
+//! The macOS host's switches that keep a covered WKWebView painting.
+use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
+
+use objc2::runtime::{NSObjectProtocol, Sel};
+use objc2::{msg_send, sel};
+use objc2_web_kit::{WKInactiveSchedulingPolicy, WKWebView};
+use tauri::{Runtime, Webview};
+
+/// WebKit's private setter of whether a covered window counts as hidden.
+pub(crate) fn occlusion_detection() -> Sel {
+    sel!(_setWindowOcclusionDetectionEnabled:)
+}
+
+/// The scheduling policy each view had when the plugin switched it, by the
+/// view's address, so switching off puts it back.
+static FOUND: Mutex<Option<HashMap<usize, WKInactiveSchedulingPolicy>>> = Mutex::new(None);
+
+/// Keep `webview` painting while it is covered when `on`, or give WebKit its
+/// own policy back. Each switch is turned only where the view answers it.
+pub(crate) fn keep_painting<R: Runtime>(webview: &Webview<R>, on: bool) {
+    let switched = webview.with_webview(move |platform| {
+        // SAFETY: on macOS `inner()` is the webview's WKWebView, which Tauri
+        // keeps alive while this closure runs on the main thread.
+        let view = unsafe { &*platform.inner().cast::<WKWebView>() };
+        let occlusion = view.respondsToSelector(occlusion_detection());
+        if occlusion {
+            // SAFETY: the view answers the selector, just asked; it takes one
+            // BOOL and returns nothing.
+            let () = unsafe { msg_send![view, _setWindowOcclusionDetectionEnabled: !on] };
+        }
+        // SAFETY: the configuration and its preferences are the view's own,
+        // alive with it, read on the main thread.
+        let preferences = unsafe { view.configuration().preferences() };
+        let scheduling = preferences.respondsToSelector(sel!(setInactiveSchedulingPolicy:));
+        if scheduling {
+            let key = std::ptr::from_ref(view) as usize;
+            // SAFETY: the preferences answer the property's setter, just
+            // asked, so they hold the property (macOS 14 and later).
+            let current = unsafe { preferences.inactiveSchedulingPolicy() };
+            let mut found = FOUND.lock().unwrap_or_else(PoisonError::into_inner);
+            let found = found.get_or_insert_with(HashMap::new);
+            let policy = if on {
+                found.entry(key).or_insert(current);
+                WKInactiveSchedulingPolicy::None
+            } else {
+                found.remove(&key).unwrap_or(current)
+            };
+            // SAFETY: the preferences answer this setter, just asked.
+            unsafe { preferences.setInactiveSchedulingPolicy(policy) };
+        }
+        tracing::info!(on, occlusion, scheduling, "ui_tauri.painting.switched");
+    });
+    if let Err(error) = switched {
+        tracing::warn!(%error, on, "ui_tauri.painting.unswitched");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2::ClassType;
+
+    use super::*;
+
+    #[test]
+    fn wkwebview_still_answers_the_private_occlusion_switch() {
+        assert!(WKWebView::class().responds_to(occlusion_detection()), "WKWebView no longer answers _setWindowOcclusionDetectionEnabled:");
+    }
+}
+```
+
 ## Drawing a driver's input
 
 A Tauri app's host draws each sequence of input it delivers over the page,
@@ -1894,6 +2165,15 @@ from the presentation, so two drivers in one window take two colours, and the
 layer picks the colour from the look. An app that declares no look is drawn in
 the host's default one.
 
+A sequence may name its requester for a person to read, `requester_name`
+(`ui-interfaces` §6). The plugin keeps the name each requester's latest
+sequence gives and sends it with that requester's pointer. The layer labels
+the pointer with the look's name for the requester first, then that name,
+then the requester as it is, by `InputLook::name_given`'s order; the label's
+rule lives in the layer alone, so the plugin resolves no name. The colour
+stays keyed by the requester, so two drivers that give one name still take
+two colours, and the name decides nothing the endpoint checks.
+
 The drawing waits for nothing: `perform` draws each event as it delivers it,
 then a task prunes what has faded and paints again every `FADE_STEP`, until
 nothing is left. At the watchable pace a move travels its watchable way, drawn
@@ -1912,7 +2192,16 @@ pub fn presents(&self, frame_only: bool) -> bool {
 /// Draw one event of `requester`'s over the page.
 fn draw(&self, requester: &str, event: &Event) {
     self.presentation.lock().unwrap_or_else(PoisonError::into_inner).show(requester, event, Instant::now());
-    paint_drawn(&self.webview, &self.presentation, &self.units);
+    paint_drawn(&self.webview, &self.presentation, &self.names, &self.units);
+}
+
+/// `requester`'s sequence names it `given`, or names it nothing.
+fn named(&self, requester: &str, given: Option<&str>) {
+    let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
+    match given {
+        Some(given) => names.insert(requester.to_string(), given.to_string()),
+        None => names.remove(requester),
+    };
 }
 
 /// Prune and paint the drawing until it has faded, in one task at a time.
@@ -1920,12 +2209,13 @@ fn keep_fading(&self) {
     if self.fading.swap(true, Ordering::SeqCst) {
         return;
     }
-    let (webview, presentation, fading, units) = (self.webview.clone(), self.presentation.clone(), self.fading.clone(), self.units.clone());
+    let (webview, presentation, names, fading, units) =
+        (self.webview.clone(), self.presentation.clone(), self.names.clone(), self.fading.clone(), self.units.clone());
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(FADE_STEP).await;
             let still = presentation.lock().unwrap_or_else(PoisonError::into_inner).prune(Instant::now());
-            paint_drawn(&webview, &presentation, &units);
+            paint_drawn(&webview, &presentation, &names, &units);
             if !still {
                 fading.store(false, Ordering::SeqCst);
                 return;
@@ -1965,15 +2255,17 @@ nothing.
 
 ```rust {#paint-drawn}
 /// Paint `presentation` on the in-page library's drawing layer, in the view's
-/// units, the view being `units` wide (an `f64`'s bits).
-fn paint_drawn<R: Runtime>(webview: &Webview<R>, presentation: &Shared, units: &AtomicU64) {
+/// units, the view being `units` wide (an `f64`'s bits), each pointer with the
+/// name its requester gives itself, when it gives one.
+fn paint_drawn<R: Runtime>(webview: &Webview<R>, presentation: &Shared, names: &Names, units: &AtomicU64) {
     let now = Instant::now();
     let drawing = {
         let mut shown = presentation.lock().unwrap_or_else(PoisonError::into_inner);
+        let names = names.lock().unwrap_or_else(PoisonError::into_inner);
         let (pointers, clicks, keys) = (shown.pointers().cloned().collect::<Vec<_>>(), shown.clicks().to_vec(), shown.keys().cloned());
         serde_json::json!({
             "units": f64::from_bits(units.load(Ordering::SeqCst)),
-            "pointers": pointers.iter().map(|p| serde_json::json!({ "requester": p.requester, "at": p.at, "pressed": p.pressed, "hue": shown.hue(&p.requester) })).collect::<Vec<_>>(),
+            "pointers": pointers.iter().map(|p| serde_json::json!({ "requester": p.requester, "name": names.get(&p.requester), "at": p.at, "pressed": p.pressed, "hue": shown.hue(&p.requester) })).collect::<Vec<_>>(),
             "clicks": clicks.iter().map(|c| serde_json::json!({ "at": c.at, "gone": faded(c.since, now, MARK_FOR), "hue": shown.hue(&c.requester) })).collect::<Vec<_>>(),
             "keys": keys.map(|k| serde_json::json!({ "requester": k.requester, "text": k.text, "gone": faded(k.since, now, MARK_FOR), "hue": shown.hue(&k.requester) })),
         })
@@ -1995,6 +2287,15 @@ does not list, arguments that misfit, input that names no held frame are all
 refused there. The requester of each call is the socket peer's credentials,
 which the endpoint reads when it accepts the connection (`ui-interfaces` §6).
 The page never names it.
+
+**An agent's sandbox denies the endpoint directory.** The endpoint answers
+every process of the user that can reach its socket, with every side-effect
+class, and an app's own tiers, which actions an agent of the app may ask for,
+are not the endpoint's checks. So an app that runs an agent's shell in a
+sandbox must deny that sandbox the endpoints' directory,
+`<runtime>/ui-control/`, or the agent can drive the app straight through its
+socket past the app's tiers. Chariot found it so: Apollo's sandboxed shell
+reached the endpoint socket directly.
 
 The app the endpoint holds is `PageApp`. It asks the page over the nonce IPC
 above for what the library gives a host
@@ -2064,6 +2365,18 @@ pub struct PageApp<R: Runtime> {
     kept: Mutex<VecDeque<Kept>>,
     /// The platform delivers one sequence at a time.
     input_turn: tokio::sync::Mutex<()>,
+    /// The spelling of the page's state shape, as it last declared it.
+    shape: Mutex<Option<Datum>>,
+}
+
+/// What the page declares: the protocol's `Declared`, and beside it whether
+/// the page takes state fixtures, which a page alone does not offer.
+#[derive(serde::Deserialize)]
+struct PageDeclared {
+    #[serde(flatten)]
+    declared: Declared,
+    #[serde(default)]
+    fixtures: bool,
 }
 
 /// What the library answers for one held observation: the observation of the
@@ -2089,7 +2402,21 @@ fn observed_script(held_json: &str, call_json: &str) -> String {
 
 impl<R: Runtime> PageApp<R> {
     pub fn new(webview: Webview<R>) -> Self {
-        Self { page: PageHost::new(webview), kept: Mutex::default(), input_turn: tokio::sync::Mutex::new(()) }
+        Self { page: PageHost::new(webview), kept: Mutex::default(), input_turn: tokio::sync::Mutex::new(()), shape: Mutex::default() }
+    }
+
+    /// What the page declares now. Its state's shape is kept, for the
+    /// endpoint's fixture checks to read.
+    async fn declared(&self) -> Result<PageDeclared, PageError> {
+        let declared: PageDeclared = self.ask("declared()").await?;
+        let shape = declared.declared.state.as_ref().map(|state| Datum::from_json(&state.shape));
+        *self.shape.lock().unwrap_or_else(PoisonError::into_inner) = shape;
+        Ok(declared)
+    }
+
+    /// The page's epoch now, which names the frame it shows.
+    async fn epoch(&self) -> Option<String> {
+        self.page.evaluate(&format!("return String(globalThis.{PAGE_GLOBAL}.epoch());")).await.ok()
     }
 
     /// What the page's `expression`, one of the library's calls, answers.
@@ -2115,7 +2442,7 @@ impl<R: Runtime> PageApp<R> {
         if let Some(why) = cannot {
             observation.capture = None;
             observation.refused.retain(|refused| refused.part != Part::Capture);
-            observation.refused.push(PartRefused { part: Part::Capture, why });
+            observation.refused.push(PartRefused { part: Part::Capture, code: None, why });
         }
         if let Some(snapshot) = &held.capture {
             if let Some(capture) = observation.capture.as_mut() {
@@ -2143,19 +2470,35 @@ impl<R: Runtime> PageApp<R> {
 }
 ```
 
-The offer is the page's, made of what it declares, with `ui/input` added. A
-page that does not answer leaves an offer that names nothing, so every call to
-it is refused by the endpoint's checks.
+**A fixture the page ends.** A page ends the fixture that stands itself with
+the library's `ui.endFixture(reason)`, such as when an approval arrives for a
+person (`x0k:implementation/ui-control/page-answer`, "A state fixture"). The
+endpoint holds no way for the page to tell it, so it asks: when its record
+says the calling session presented a fixture the page no longer shows, it
+asks the app's `fixture_ended(handle)`, and `PageApp` answers it with the
+library's `fixtureEnded(handle)`. The endpoint then refuses that session's
+next action or input as `fixture_ended` with the page's reason, once. A
+`release` of the handle the library answers `ended` with the reason itself. A
+page that does not answer is taken to have ended nothing.
+
+The offer is the page's, made of what it declares, with `ui/input` added, and
+`ui/history` when the page takes state fixtures. A page holds no past
+positions, so its history names none and says it takes fixtures. A page that
+does not answer leaves an offer that names nothing, so every call to it is
+refused by the endpoint's checks.
 
 <a name="chunk-endpoint-offer"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#endpoint-offer`</sub>
 
 ```rust {#endpoint-offer}
 async fn offer(&self) -> Offer {
-    let input = interfaces().into_iter().filter(|interface| interface.name == UI_INPUT);
-    match self.ask::<Declared>("declared()").await.map(page_offer) {
-        Ok(mut offer) => {
-            offer.interfaces.extend(input);
+    match self.declared().await {
+        Ok(PageDeclared { declared, fixtures }) => {
+            let input = interfaces().into_iter().filter(|interface| interface.name == UI_INPUT);
+            let history = interface(UI_HISTORY).filter(|_| fixtures);
+            let mut offer = page_offer(declared);
+            offer.interfaces.extend(input.chain(history));
             offer.input = Some(InputOffer { presents: true, takeover: false });
+            offer.history = fixtures.then_some(HistoryOffer { oldest: None, newest: None, fixtures: true });
             offer
         }
         Err(error) => {
@@ -2177,7 +2520,7 @@ async fn observe(&self, call: ObserveCall) -> Observation {
         Ok(observation) => observation,
         Err(error) => {
             let why = error.to_string();
-            let refused = call.parts.iter().map(|part| PartRefused { part: *part, why: why.clone() }).collect();
+            let refused = call.parts.iter().map(|part| PartRefused { part: *part, code: None, why: why.clone() }).collect();
             Observation { frame: None, capture: None, layout: None, state: None, refused, shown: Some(Shown::Live) }
         }
     }
@@ -2196,6 +2539,118 @@ async fn invoke(&self, action: &Action, args: Value) -> Outcome {
     match self.ask::<Outcome>(&run).await {
         Ok(outcome) => outcome,
         Err(error) => Outcome::Failed { reason: error.to_string(), frame: None },
+    }
+}
+```
+
+**A state fixture.** A page whose declaration gives `present` and `release`
+takes state fixtures (`x0k:implementation/ui-control/page-answer`, "A state
+fixture"), and the plugin offers `ui/history` for it. The checks of
+`ui-interfaces` §4 are the endpoint's: before `present` reaches the page,
+`check_present` holds the call's fingerprint to the state shape, the head it
+names to the live state, and the state after any merge patch to the shape.
+The plugin answers the endpoint the two things the check reads, the shape and
+the live state, from what the page declares, and checks nothing again. The
+page loads no WebAssembly and makes no check either: the library hands its
+host what it declares, raw, and the host's checks are the only ones.
+
+- The live state is what `declared()` answers, which while a fixture stands
+  is the live state as it stood when the first fixture was presented.
+- The endpoint reads the shape without waiting, so the plugin keeps the shape
+  the page last declared. The endpoint asks for the offer and the live state
+  before the shape on every `present`, and both read the page's declaration,
+  so the shape it reads is the one declared in the same call.
+- `present` and `release` go to the library over the same nonce IPC, and the
+  library answers each once one rendering update has run after the page's own
+  hook, as it answers `run`. So the frame each names is the first painted
+  after it. The protocol spells both answers as the library does, so the
+  plugin hands them on.
+- What the page shows is the library's `fixture()`. The endpoint asks for it
+  before each action and each sequence of input, and under a fixture answers
+  an action by the offer's replay policy, which for a page that declares none
+  is `graded-introspection` §9's defaults: a `read_only` action runs, any
+  other is simulated, since a page declares no sandbox.
+- A navigation to `live` releases the fixture that stands. A page holds no
+  past position, so the endpoint refuses a navigation to any position before
+  the plugin hears it.
+
+A page whose hook throws refuses the call. The protocol has no code for a page
+that lost its own state, so a thrown `present` is refused as `misfit_state`,
+as the shell refuses a state its type does not read, and a `present` or
+`release` the page did not answer is refused as `no_fixtures`, with the reason.
+
+<a name="chunk-endpoint-fixtures"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#endpoint-fixtures`</sub>
+
+```rust {#endpoint-fixtures}
+async fn shown(&self) -> Shown {
+    match self.ask::<Option<String>>("fixture()").await {
+        Ok(Some(handle)) => Shown::Fixture { handle },
+        Ok(None) => Shown::Live,
+        Err(error) => {
+            tracing::warn!(%error, "ui_tauri.endpoint.shown_unanswered");
+            Shown::Live
+        }
+    }
+}
+
+async fn history(&self, _call: HistoryCall) -> History {
+    History { oldest: None, newest: None, shown: self.shown().await, positions: Vec::new() }
+}
+
+async fn navigate(&self, to: Destination) -> NavigateAnswer {
+    if let Destination::Position { position } = to {
+        let why = format!("the page holds no position {position}");
+        return NavigateAnswer::Refused(Refused { code: RefusalCode::UnknownPosition, subject: Some(position.to_string()), why });
+    }
+    let frame = match self.shown().await {
+        Shown::Fixture { handle } => match self.release(handle).await {
+            ReleaseAnswer::Released { frame } => frame,
+            ReleaseAnswer::NotStanding { .. } | ReleaseAnswer::Ended { .. } => self.epoch().await,
+            ReleaseAnswer::Refused(refused) => return NavigateAnswer::Refused(refused),
+        },
+        _ => self.epoch().await,
+    };
+    NavigateAnswer::Shown { shown: Shown::Live, frame }
+}
+
+fn state_shape(&self) -> Option<Datum> {
+    self.shape.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
+
+async fn live_state(&self) -> Option<StatePart> {
+    match self.declared().await {
+        Ok(declared) => declared.declared.state.map(state_part),
+        Err(error) => {
+            tracing::warn!(%error, "ui_tauri.endpoint.state_unanswered");
+            None
+        }
+    }
+}
+
+async fn present(&self, state: Value) -> PresentAnswer {
+    match self.ask::<PresentAnswer>(&format!("present({state})")).await {
+        Ok(answer) => answer,
+        Err(error) => {
+            let code = if matches!(error, PageError::Threw(_)) { RefusalCode::MisfitState } else { RefusalCode::NoFixtures };
+            PresentAnswer::Refused(Refused { code, subject: Some(UI_HISTORY.to_string()), why: error.to_string() })
+        }
+    }
+}
+
+async fn release(&self, handle: String) -> ReleaseAnswer {
+    match self.ask::<ReleaseAnswer>(&format!("release({})", json!(handle))).await {
+        Ok(answer) => answer,
+        Err(error) => ReleaseAnswer::Refused(Refused { code: RefusalCode::NoFixtures, subject: Some(handle), why: error.to_string() }),
+    }
+}
+
+async fn fixture_ended(&self, handle: &str) -> Option<String> {
+    match self.ask::<Option<String>>(&format!("fixtureEnded({})", json!(handle))).await {
+        Ok(why) => why,
+        Err(error) => {
+            tracing::warn!(%error, "ui_tauri.endpoint.ended_unanswered");
+            None
+        }
     }
 }
 ```
@@ -2231,9 +2686,61 @@ async fn perform_for(&self, requester: &str, perform: Perform, resolved: Vec<Res
     };
     let _turn = self.input_turn.lock().await;
     match self.page.perform(requester, &perform, &resolved, scale).await {
-        Ok(epoch) => Some(epoch.to_string()),
+        Ok(epoch) => epoch.map(|epoch| epoch.to_string()),
         Err(error) => {
             tracing::warn!(%error, "ui_tauri.endpoint.input_undelivered");
+            None
+        }
+    }
+}
+```
+
+**What the host cannot do now, and what the page declines.** The endpoint
+asks three things of its app before it runs a call, and refuses the call by
+the protocol's codes (`x0k:implementation/ui-control/endpoint`):
+
+- `cannot_paint` is the window's word first: a minimised or hidden window, as
+  Tauri's window reports it, cannot paint, and the plugin answers that
+  without a round trip to the page. Otherwise it asks the library's
+  `unpainted()`, which answers why while the page is hidden or has had no
+  rendering update within a bound, as for a window WebKit counts as covered.
+  The page waits on nothing to answer it, so the refusal comes back within the
+  round trip. A page that does not answer is taken to paint, and the call
+  then answers as it would have.
+- `delivers` is `DELIVERED`, the kinds the platform's input path delivers:
+  `mouse`, `key` and `wheel`. So the endpoint refuses a `touch` or a `pen`
+  source as `undeliverable_source` before any of the sequence runs; before,
+  the plugin heard it, refused it to itself, and the endpoint answered `done`.
+- `declines` asks the library's `declines(call)`, which is the page's own
+  `declines` hook. A `present` the page declines needs nothing of the plugin:
+  the library answers it `declined` and the plugin hands that on as the
+  page's answer. A `present` hook that throws anything else is still
+  `misfit_state`.
+
+`page_unsettled` has no code of its own. The page kept changing through every
+hold, and the next observation may settle; no word of the protocol says that,
+so the capture's refusal carries the reason for a person and no code.
+
+<a name="chunk-endpoint-conditions"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#endpoint-conditions`</sub>
+
+```rust {#endpoint-conditions}
+async fn cannot_paint(&self) -> Option<String> {
+    self.page.cannot_paint().await
+}
+
+fn delivers(&self) -> &[&str] {
+    crate::input::DELIVERED
+}
+
+async fn declines(&self, call: Declinable<'_>) -> Option<String> {
+    let call = match call {
+        Declinable::Invoke(action) => json!({ "kind": "invoke", "action": action.name }),
+        Declinable::Perform(_) => json!({ "kind": "perform" }),
+    };
+    match self.ask::<Option<String>>(&format!("declines({call})")).await {
+        Ok(why) => why,
+        Err(error) => {
+            tracing::warn!(%error, "ui_tauri.endpoint.declines_unanswered");
             None
         }
     }
@@ -2286,18 +2793,70 @@ fails, which the plugin reports and does not retry.
 
 ```rust {#endpoint-serve}
 /// Serve `webview`'s page as the app's UI-control endpoint on the unix socket
-/// at `path`, until the app ends.
-pub async fn serve<R: Runtime>(path: PathBuf, webview: Webview<R>) {
+/// at `path`, until the app ends. With `driven`, a covered window keeps
+/// painting while a driver is connected.
+pub async fn serve<R: Runtime>(path: PathBuf, webview: Webview<R>, driven: bool) {
     if let Some(dir) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(dir) {
             return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound");
         }
     }
     let every = Grant { classes: vec![SideEffect::ReadOnly, SideEffect::IdempotentWrite, SideEffect::NonIdempotent] };
-    let endpoint = Arc::new(Endpoint::new(PageApp::new(webview), every));
+    let endpoint = Arc::new(Endpoint::new(PageApp::new(webview.clone()), every));
+    let listener = match bind_path(&path).await {
+        Ok(listener) => listener,
+        Err(error) => return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound"),
+    };
     tracing::info!(path = %path.display(), "ui_tauri.endpoint.listening");
-    if let Err(error) = listen(&path, endpoint).await {
-        tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound");
+    let drivers = Arc::new(Drivers { webview, driven, connected: Mutex::new(0) });
+    loop {
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(error) => return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound"),
+        };
+        let (endpoint, requester, connected) = (Arc::clone(&endpoint), requester(&stream), Drivers::arrive(&drivers));
+        let span = tracing::info_span!("ui_endpoint.connection", requester = %requester);
+        tauri::async_runtime::spawn(
+            async move {
+                let _connected = connected;
+                let _ = serve_connection_from(stream, endpoint, requester).await;
+            }
+            .instrument(span),
+        );
+    }
+}
+
+/// The drivers connected to the endpoint, and the webview they drive.
+struct Drivers<R: Runtime> {
+    webview: Webview<R>,
+    /// Whether the window keeps painting while one is connected.
+    driven: bool,
+    connected: Mutex<usize>,
+}
+
+/// One driver's connection, until it ends.
+struct Connected<R: Runtime>(Arc<Drivers<R>>);
+
+impl<R: Runtime> Drivers<R> {
+    /// A driver connects: the first turns the window's painting on.
+    fn arrive(drivers: &Arc<Self>) -> Connected<R> {
+        let mut connected = drivers.connected.lock().unwrap_or_else(PoisonError::into_inner);
+        *connected += 1;
+        if *connected == 1 && drivers.driven {
+            crate::painting::keep_painting(&drivers.webview, true);
+        }
+        Connected(Arc::clone(drivers))
+    }
+}
+
+impl<R: Runtime> Drop for Connected<R> {
+    /// A driver leaves: the last gives WebKit its own policy back.
+    fn drop(&mut self) {
+        let mut connected = self.0.connected.lock().unwrap_or_else(PoisonError::into_inner);
+        *connected -= 1;
+        if *connected == 0 && self.0.driven {
+            crate::painting::keep_painting(&self.0.webview, false);
+        }
     }
 }
 ```
@@ -2333,29 +2892,33 @@ mod tests {
 }
 ```
 
-<a name="chunk-endpoint-file"></a><sub>[`src/endpoint.rs`](../../crates/x0k-ui-tauri/src/endpoint.rs) · `#endpoint-file` · assembles [endpoint-app](#chunk-endpoint-app) · [endpoint-offer](#chunk-endpoint-offer) · [endpoint-observe](#chunk-endpoint-observe) · [endpoint-invoke](#chunk-endpoint-invoke) · [endpoint-input](#chunk-endpoint-input) · [endpoint-scale](#chunk-endpoint-scale) · [endpoint-serve](#chunk-endpoint-serve) · [endpoint-tests](#chunk-endpoint-tests)</sub>
+<a name="chunk-endpoint-file"></a><sub>[`src/endpoint.rs`](../../crates/x0k-ui-tauri/src/endpoint.rs) · `#endpoint-file` · assembles [endpoint-app](#chunk-endpoint-app) · [endpoint-offer](#chunk-endpoint-offer) · [endpoint-observe](#chunk-endpoint-observe) · [endpoint-invoke](#chunk-endpoint-invoke) · [endpoint-fixtures](#chunk-endpoint-fixtures) · [endpoint-input](#chunk-endpoint-input) · [endpoint-conditions](#chunk-endpoint-conditions) · [endpoint-scale](#chunk-endpoint-scale) · [endpoint-serve](#chunk-endpoint-serve) · [endpoint-tests](#chunk-endpoint-tests)</sub>
 
 ```rust {#endpoint-file file="src/endpoint.rs"}
 //! The plugin's UI-control endpoint: the page as `x0k-ui-endpoint`'s app,
 //! made of what the page declares, reads and runs over the plugin's IPC.
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tauri::{Runtime, Webview};
-use x0k_ui_endpoint::server::{listen, Endpoint, UiApp, UNNAMED};
+use tracing::Instrument;
+use x0k_datum::Datum;
+use x0k_ui_endpoint::server::{bind_path, requester, serve_connection_from, Declinable, Endpoint, UiApp, UNNAMED};
 use x0k_ui_protocol::act::{Grant, Outcome};
-use x0k_ui_protocol::history::Shown;
+use x0k_ui_protocol::fixture::{PresentAnswer, ReleaseAnswer};
+use x0k_ui_protocol::history::{Destination, History, HistoryCall, HistoryOffer, NavigateAnswer, Shown};
 use x0k_ui_protocol::input::{HeldFrame, InputOffer, Perform, Resolved, Step, Target};
-use x0k_ui_protocol::observe::{LayoutNode, Observation, ObserveCall, Part, PartRefused};
-use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_INPUT};
+use x0k_ui_protocol::observe::{LayoutNode, Observation, ObserveCall, Part, PartRefused, StatePart};
+use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY, UI_INPUT};
 use x0k_ui_protocol::page::{page_offer, state_part, Declared, DeclaredState};
-use x0k_ui_protocol::shapes::interfaces;
+use x0k_ui_protocol::shapes::{interface, interfaces};
+use x0k_ui_protocol::{Refused, RefusalCode};
 
 use crate::held::{held_capture, HOLD_TRIES};
-use crate::page::{PageError, PageHold, PageHost};
+use crate::page::{PageError, PageHold, PageHost, PAGE_GLOBAL};
 
 /// How many observed frames input may still name, as the shell keeps.
 pub const HELD_FRAMES: usize = 8;
@@ -2371,7 +2934,11 @@ impl<R: Runtime> UiApp for PageApp<R> {
 
     <<endpoint-invoke>>
 
+    <<endpoint-fixtures>>
+
     <<endpoint-input>>
+
+    <<endpoint-conditions>>
 }
 
 <<endpoint-scale>>
@@ -2392,7 +2959,7 @@ because a Tauri app needs a build script of its own, and it is never shipped.
 ```toml {#probe-manifest file="probe-app/Cargo.toml"}
 [package]
 name = "x0k-ui-tauri-probe"
-version = "0.1.0"
+version = "0.2.0"
 edition = { workspace = true }
 license = "MIT"
 description = "A minimal Tauri app holding the probe page, for x0k-ui-tauri's probe test."
@@ -2406,8 +2973,10 @@ base64 = "0.22"
 serde_json = "1"
 tauri = { version = "2.12", default-features = false, features = ["wry", "x11"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
-x0k-ui-protocol = { path = "../../x0k-ui-protocol", version = "0.1.0" }
-x0k-ui-tauri = { path = "..", version = "0.1.0" }
+x0k-ui-protocol = { path = "../../x0k-ui-protocol", version = "0.2.0" }
+x0k-ui-tauri = { path = "..", version = "0.2.0" }
+# The client a driver calls the app's own endpoint through, for the probe's `endpoint` request.
+x0k-ui-endpoint = { path = "../../x0k-ui-endpoint", version = "0.2.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The webview's hardware acceleration policy, and nothing else.
@@ -2500,7 +3069,10 @@ probe-app/pages/
 The app takes the socket, the window's size, the compositing policy and the
 page from its arguments, as the library's WebKitGTK host does. It adds the
 plugin as any Tauri app adopts it, with its app name,
-`x0k-ui-tauri-probe`, served from the window `probe`. When the
+`x0k-ui-tauri-probe`, served from the window `probe`. Given a sixth
+argument, a socket's path, it adds the plugin with `ui_plugin_at` instead, as
+an app that places its endpoint itself does, and calls its own endpoint
+there. When the
 page has loaded, it connects to the test's socket and serves it. The
 compositing policy is WebKitGTK's. A WKWebView always composites, so on macOS
 the app takes the argument and sets nothing.
@@ -2510,21 +3082,30 @@ the app takes the argument and sets nothing.
 ```rust {#probe-main}
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let [_, socket, width, height, policy, page] = &args[..] else {
-        eprintln!("usage: x0k-ui-tauri-probe <socket> <width> <height> <ALWAYS|NEVER> <page.html>");
-        std::process::exit(2);
+    let (socket, width, height, policy, page, at) = match &args[..] {
+        [_, socket, width, height, policy, page] => (socket, width, height, policy, page, None),
+        [_, socket, width, height, policy, page, at] => (socket, width, height, policy, page, Some(PathBuf::from(at))),
+        _ => {
+            eprintln!("usage: x0k-ui-tauri-probe <socket> <width> <height> <ALWAYS|NEVER> <page.html> [<endpoint path>]");
+            std::process::exit(2);
+        }
     };
     let (width, height): (f64, f64) = (width.parse().expect("width"), height.parse().expect("height"));
     let (socket, accelerate, page) = (socket.clone(), policy == "ALWAYS", page.clone());
+    let plugin = match &at {
+        Some(path) => x0k_ui_tauri::ui_plugin_at(path.clone(), "probe", CoveredPainting::default()),
+        None => x0k_ui_tauri::ui_plugin(APP, "probe"),
+    };
+    let endpoint = at.unwrap_or_else(|| x0k_ui_tauri::endpoint_socket_path(APP));
     tauri::Builder::default()
-        .plugin(x0k_ui_tauri::ui_plugin(APP, "probe"))
+        .plugin(plugin)
         .setup(move |app| {
-            let socket = socket.clone();
+            let (socket, endpoint) = (socket.clone(), endpoint.clone());
             let window = WebviewWindowBuilder::new(app, "probe", WebviewUrl::App(page.into()))
                 .inner_size(width, height)
                 .on_page_load(move |window, payload| {
                     if payload.event() == PageLoadEvent::Finished {
-                        tauri::async_runtime::spawn(serve(socket.clone(), window.as_ref().clone()));
+                        tauri::async_runtime::spawn(serve(socket.clone(), endpoint.clone(), window.as_ref().clone()));
                     }
                 })
                 .build()?;
@@ -2561,13 +3142,20 @@ is its answer with that id:
 - `{"op": "drawn", "frame_only"}` answers the plugin's capture of the held
   page, with the drawing of input or, for the frame alone, without it, as the
   endpoint answers one, and whether it carries the drawing;
-- `{"op": "forge"}` runs the nonce test below.
+- `{"op": "forge"}` runs the nonce test below;
+- `{"op": "hide"}` and `{"op": "show"}` hide the app's window and show it
+  again, as a person minimising it would, so the window does not present;
+- `{"op": "endpoint", "call", "argument"}` makes one call, `observe`,
+  `invoke` or `perform`, to the app's own endpoint as a driver does, over a
+  session of its own, and answers the endpoint's `answer` and how many `ms`
+  it took, or the client's `fault`.
 
 <a name="chunk-probe-serve"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#probe-serve`</sub>
 
 ```rust {#probe-serve}
-/// Connect to the test's socket, say ready, and answer each request line.
-async fn serve(socket: String, webview: Webview<Wry>) {
+/// Connect to the test's socket, say ready, and answer each request line,
+/// calling the app's own endpoint at `endpoint`.
+async fn serve(socket: String, endpoint: PathBuf, webview: Webview<Wry>) {
     let stream = connect_test_socket(&socket).expect("the test's socket");
     stream.set_nonblocking(true).expect("a nonblocking socket");
     let (read, mut write) = UnixStream::from_std(stream).expect("the test's socket").into_split();
@@ -2583,6 +3171,9 @@ async fn serve(socket: String, webview: Webview<Wry>) {
             Some("input") => perform_probe(&page, &request).await,
             Some("drawn") => drawn_probe(&page, &request).await,
             Some("forge") => Ok(forge(&page, &webview).await),
+            Some("hide") => webview.window().hide().map(|()| json!({})).map_err(PageError::from),
+            Some("show") => webview.window().show().map(|()| json!({})).map_err(PageError::from),
+            Some("endpoint") => Ok(endpoint_probe(&endpoint, &request).await),
             other => Ok(json!({ "error": format!("unknown op {other:?}") })),
         };
         let mut reply = reply.unwrap_or_else(|e| json!({ "error": e.to_string() }));
@@ -2645,7 +3236,7 @@ async fn perform_probe(page: &PageHost<Wry>, request: &Value) -> Result<Value, P
         Ok(resolved) => resolved,
         Err(refused) => return Ok(json!({ "refused": format!("{refused:?}") })),
     };
-    let epoch = page.perform("probe", &perform, &resolved, request["scale"].as_f64().unwrap_or(f64::NAN)).await?;
+    let epoch = page.perform("probe", &perform, &resolved, request["scale"].as_f64().unwrap_or(f64::NAN)).await?.map_or(Value::Null, Value::from);
     Ok(json!({ "epoch": epoch }))
 }
 ```
@@ -2768,12 +3359,13 @@ async fn send_line(write: &mut tokio::net::unix::OwnedWriteHalf, message: Value)
 }
 ```
 
-<a name="chunk-probe-file"></a><sub>[`probe-app/src/main.rs`](../../crates/x0k-ui-tauri/probe-app/src/main.rs) · `#probe-file` · assembles [probe-main](#chunk-probe-main) · [probe-serve](#chunk-probe-serve) · [probe-observe](#chunk-probe-observe) · [probe-input](#chunk-probe-input) · [probe-drawn](#chunk-probe-drawn) · [probe-host](#chunk-probe-host) · [probe-forge](#chunk-probe-forge) · [probe-socket](#chunk-probe-socket)</sub>
+<a name="chunk-probe-file"></a><sub>[`probe-app/src/main.rs`](../../crates/x0k-ui-tauri/probe-app/src/main.rs) · `#probe-file` · assembles [probe-main](#chunk-probe-main) · [probe-serve](#chunk-probe-serve) · [probe-observe](#chunk-probe-observe) · [probe-input](#chunk-probe-input) · [probe-drawn](#chunk-probe-drawn) · [probe-host](#chunk-probe-host) · [probe-forge](#chunk-probe-forge) · [probe-endpoint](#chunk-probe-endpoint) · [probe-socket](#chunk-probe-socket)</sub>
 
 ```rust {#probe-file file="probe-app/src/main.rs"}
 //! A minimal Tauri app for x0k-ui-tauri's probe test: the probe page in one
 //! window, driven by the test over a unix socket.
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -2781,9 +3373,10 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, Webview, WebviewUrl, WebviewWindowBuilder, Wry};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use x0k_ui_endpoint::client::UiClient;
 use x0k_ui_protocol::input::{check_perform, HeldFrame, Perform};
 use x0k_ui_protocol::offer::{Offer, UI_INPUT};
-use x0k_ui_tauri::{held_capture, Held, HoldingHost, PageError, PageHold, PageHost, Pending, Snapshot, HOLD_TRIES, PAGE_GLOBAL};
+use x0k_ui_tauri::{held_capture, CoveredPainting, Held, HoldingHost, PageError, PageHold, PageHost, Pending, Snapshot, HOLD_TRIES, PAGE_GLOBAL};
 
 /// The probe app's name, which its endpoint is named for.
 const APP: &str = "x0k-ui-tauri-probe";
@@ -2802,7 +3395,41 @@ const APP: &str = "x0k-ui-tauri-probe";
 
 <<probe-forge>>
 
+<<probe-endpoint>>
+
 <<probe-socket>>
+```
+
+A call to the app's own endpoint goes through `UiClient`, as any driver's
+does, so the endpoint's checks and the plugin's answers are what the test sees.
+
+<a name="chunk-probe-endpoint"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#probe-endpoint`</sub>
+
+```rust {#probe-endpoint}
+/// One call to the app's endpoint at `endpoint` as `request` names it, and how long it took.
+async fn endpoint_probe(endpoint: &Path, request: &Value) -> Value {
+    let started = Instant::now();
+    let answered = endpoint_call(endpoint, request["call"].as_str().unwrap_or_default(), request["argument"].clone()).await;
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    match answered {
+        Ok(answer) => json!({ "answer": answer, "ms": ms }),
+        Err(fault) => json!({ "fault": fault.to_string(), "ms": ms }),
+    }
+}
+
+/// Why a call to the endpoint got no answer: the socket, the client, or a request the test spelled wrong.
+type Fault = Box<dyn std::error::Error + Send + Sync>;
+
+async fn endpoint_call(endpoint: &Path, call: &str, argument: Value) -> Result<Value, Fault> {
+    let stream = UnixStream::connect(endpoint).await?;
+    let client = UiClient::open(stream).await?;
+    Ok(match call {
+        "observe" => serde_json::to_value(client.observe(&serde_json::from_value(argument)?).await?)?,
+        "invoke" => serde_json::to_value(client.invoke(&serde_json::from_value(argument)?).await?)?,
+        "perform" => serde_json::to_value(client.perform(&serde_json::from_value(argument)?).await?)?,
+        other => return Err(format!("no endpoint call {other}").into()),
+    })
+}
 ```
 
 ## The probe test
@@ -2876,8 +3503,10 @@ const deadline = (what: string) => new Promise<never>((_, fail) =>
 
 /** The probe app, composited or not, showing `page`, and a call to it: on
  * Linux on an X server of its own at GDK's `gdkScale` widget scale, on macOS
- * on the Mac's display at its own backing scale. */
-async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.html') {
+ * on the Mac's display at its own backing scale. With `at`, the app gives the
+ * plugin its endpoint's path, `given/probe.endpoint` in its runtime directory,
+ * by `ui_plugin_at`. */
+async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.html', at = false) {
   const home = ownedTempDir('x0k-ui-tauri-home-');
   const env = MAC ? scratchEnv(home) : scratchEnv(home, { LIBGL_ALWAYS_SOFTWARE: '1', NO_AT_BRIDGE: '1', GDK_BACKEND: 'x11', GDK_SCALE: String(gdkScale) });
   const stops: (() => Promise<void>)[] = [];
@@ -2895,10 +3524,10 @@ async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.h
     const server = createServer();
     const accepted = new Promise<Socket>((done) => server.once('connection', done));
     await new Promise<void>((done) => server.listen(MAC ? address : `\0${address.slice(1)}`, done));
-    const endpoint = `${runtime}/ui-control/x0k-ui-tauri-probe.endpoint`;
+    const endpoint = at ? `${runtime}/given/probe.endpoint` : `${runtime}/ui-control/x0k-ui-tauri-probe.endpoint`;
     const appEnv: NodeJS.ProcessEnv = { ...env, X0K_RUNTIME_DIR: runtime, ...(x ? { DISPLAY: x.name } : {}) };
     delete appEnv.X0K_UI_CONTROL_ENDPOINT_DIR;
-    const args = [PROBE, address, String(SIZE.width), String(SIZE.height), compositing ? 'ALWAYS' : 'NEVER', page];
+    const args = [PROBE, address, String(SIZE.width), String(SIZE.height), compositing ? 'ALWAYS' : 'NEVER', page, ...(at ? [endpoint] : [])];
     const app = x
       ? spawnOwned(RUN, args, { env: appEnv, stderr: 'inherit' })
       : spawnOwned(args[0], args.slice(1), { env: appEnv, stderr: 'inherit' });
@@ -2916,7 +3545,7 @@ async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.h
       return reply;
     };
     const agent = (await call({ op: 'eval', body: 'return navigator.userAgent;' })).value;
-    return { version: `Tauri ${tauri}, ${agent}`, endpoint, call, close: async () => { link.destroy(); await stopAll(); } };
+    return { version: `Tauri ${tauri}, ${agent}`, runtime, endpoint, call, close: async () => { link.destroy(); await stopAll(); } };
   } catch (e) {
     await stopAll();
     throw e;
@@ -3099,6 +3728,30 @@ for (const gdkScale of MAC ? [0] : [1, 2]) {
       assert.ok(!ink(pixels.alone), `the frame alone shows the pointer's ink, ${pixels.alone}`);
       await seen();
     });
+    test('a driver that names itself is labelled with that name over the page, and one that does not with its requester', async (t) => {
+      /** A pointer at (20, 150) CSS pixels, where the probe page draws nothing,
+       * its label to its right; how far right of the pointer the label's ink
+       * runs, in CSS pixels, in a capture that carries the drawing. */
+      const labelRun = async (requester_name?: string) => {
+        const to = { frame: page.frame.frame, x: 20 * page.scaleFactor, y: 150 * page.scaleFactor };
+        const answer = await page.app.call({ op: 'input', frame: page.frame, scale: page.widgetScale, perform: { requester_name, sources: [{ id: 'mouse', kind: 'mouse', steps: [{ do: 'move', to }] }] } });
+        assert.equal(answer.refused, undefined, JSON.stringify(answer));
+        const drawn = image((await page.app.call({ op: 'drawn', frame_only: false })).capture);
+        const [row, from] = [Math.round(171 * page.scaleFactor), Math.round(36 * page.scaleFactor)];
+        let last = from;
+        for (let x = from; x < drawn.width; x++) {
+          const [r, g, b] = drawn.rgb(x, row);
+          if (r === DRAWN_INK[0] && g === DRAWN_INK[1] && b === DRAWN_INK[2]) last = x;
+        }
+        return (last - from) / page.scaleFactor;
+      };
+      const named = await labelRun('a driver that names itself');
+      const unnamed = await labelRun(undefined);
+      t.diagnostic(`label ink runs ${named.toFixed(0)} CSS pixels named, ${unnamed.toFixed(0)} unnamed ('probe')`);
+      assert.ok(unnamed > 10, `the unnamed label runs ${unnamed} CSS pixels`);
+      assert.ok(named > unnamed + 80, `the named label runs ${named} CSS pixels, the unnamed ${unnamed}`);
+      await seen();
+    });
     test('the drawing is no part of the page: painted in a hold, it moves no epoch, changes no layout walk and answers no hit test', async () => {
       const at = await centre('probe-button');
       const apart = await evaluate(drawnApart(at.x / page.scaleFactor, at.y / page.scaleFactor));
@@ -3124,6 +3777,14 @@ have heard at least one, so the claim cannot hold by the page hearing nothing.
 The suite itself invokes an action the offer does not list, so a plugin whose
 calls reached the page before the endpoint's checks would show it here.
 
+The answer page takes state fixtures, so the suite holds the plugin to
+`ui-interfaces` §4 over the endpoint, and the test asks that the fixture
+claims hold by name rather than go unreachable: a fixture is shown in the
+frame `present` names and an observation names it, the caller's
+`counter.bump` is simulated under it, releasing shows the live state, the live
+head is where it was after a present and a release, and a session's end
+releases the fixture it presented.
+
 <a name="chunk-test-endpoint"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#test-endpoint`</sub>
 
 ```typescript {#test-endpoint}
@@ -3131,17 +3792,22 @@ calls reached the page before the endpoint's checks would show it here.
 const ACT = ['counter.bump', '{"by":1}'];
 /** Claims of the suite's report the plugin must hold, beside its verdict. */
 const ENDPOINT_CLAIMS = ['an action the offer does not list is refused', 'counter.bump runs and names the frame after it',
-  'a pointer move to a layout node runs and names the frame after it', 'a click at the watchable pace answers no sooner than its floor'];
+  'a pointer move to a layout node runs and names the frame after it', 'a click at the watchable pace answers no sooner than its floor',
+  'presenting a fixture shows it and names its frame', 'an observation names the fixture it shows',
+  'an action above read_only takes the disposition the replay policy gives it, and a non_idempotent one is never performed',
+  'releasing a fixture shows the live state', 'a fixture never changes the live state: presenting and releasing leaves its head where it was',
+  'a session\'s end releases the fixture it presented'];
 /** What wraps the library's run, so the page records each action it runs. */
 const HEARING = `const run = globalThis.__x0kUi.run;
   window.heard = [];
   globalThis.__x0kUi.run = (name, args) => { heard.push(name); return run(name, args); };
   return 'ok';`;
 
-/** The suite's report on the endpoint at `socket`, and whether every claim held. */
-function conformance(socket: string, act: string[]): Promise<{ held: boolean; report: string }> {
-  return new Promise((done, fail) => execFile(UI_CONFORMANCE, [socket, ...act], { maxBuffer: 1 << 24 }, (e, stdout, stderr) => {
-    if (e && e.code !== 1) fail(new Error(`${UI_CONFORMANCE} could not judge the app: ${stderr || e.message}`));
+/** The suite's report on the endpoint at `socket`, and whether every claim
+ * held, within `timeout` ms when one is given. */
+function conformance(socket: string, act: string[], timeout = 0): Promise<{ held: boolean; report: string }> {
+  return new Promise((done, fail) => execFile(UI_CONFORMANCE, [socket, ...act], { maxBuffer: 1 << 24, timeout }, (e, stdout, stderr) => {
+    if (e && e.code !== 1) fail(new Error(`${UI_CONFORMANCE} could not judge the app${e.killed ? ` within ${timeout} ms` : ''}: ${stderr || e.message}`));
     else done({ held: !e, report: stdout });
   }));
 }
@@ -3161,7 +3827,7 @@ describe('the answer page in a Tauri app, over its endpoint', () => {
   test('the app holds to the conformance suite over its endpoint', (t) => {
     t.diagnostic(run.report.trim());
     assert.ok(run.held, run.report);
-    for (const claim of ENDPOINT_CLAIMS) assert.match(run.report, new RegExp(`holds +§\\S+ ${claim}`), run.report);
+    for (const claim of ENDPOINT_CLAIMS) assert.match(run.report, new RegExp(`holds +(ui-interfaces )?§\\S+ ${claim}`), run.report);
   });
   test('a call the offer does not list never reaches the page', async () => {
     const declared = JSON.parse((await app.call({ op: 'eval', body: 'return JSON.stringify(globalThis.__x0kUi.declared());' })).value);
@@ -3173,12 +3839,149 @@ describe('the answer page in a Tauri app, over its endpoint', () => {
 });
 ```
 
-<a name="chunk-test-file"></a><sub>[`probe-app/tests/probe.test.ts`](../../crates/x0k-ui-tauri/probe-app/tests/probe.test.ts) · `#test-file` · assembles [test-setup](#chunk-test-setup) · [test-percentile](#chunk-test-percentile) · [test-app](#chunk-test-app) · [test-trials](#chunk-test-trials) · [test-input](#chunk-test-input) · [test-claims](#chunk-test-claims) · [test-input-claims](#chunk-test-input-claims) · [test-endpoint](#chunk-test-endpoint)</sub>
+The same page in a window the app has hidden, and a page that declines. The
+app hides its window as a person minimising it would, so the window does not
+present, and the suite then reaches its `cannot_paint` claims, which the
+claims above leave unreachable because that window paints. Each call a driver
+makes to the hidden window is timed against the plugin's 5 s wait for the
+page, so a host that waits on a frame that never comes reads as `did not answer
+within 5000 ms`, and each must answer within the suite's second. A touch
+source is refused as one the host cannot deliver, naming its kind, and the
+page hears nothing. A `present` the page declines, while an approval waits,
+is refused as `declined` with the page's reason, which the suite reads as the
+fixture claims being unreachable for now, never broken.
+
+<a name="chunk-test-hidden"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#test-hidden`</sub>
+
+```typescript {#test-hidden}
+/** How long the plugin waits for the page's answer. */
+const UNANSWERED_MS = 5000;
+/** How soon a host that cannot paint refuses a call: the suite's `CANNOT_PAINT_WITHIN`. */
+const REFUSED_WITHIN_MS = 1000;
+/** The suite's claims of a host that cannot paint its window. */
+const CANNOT_PAINT_CLAIMS = ['§8 while the host cannot paint the window, an observation refuses only the capture, as cannot_paint',
+  '§9 while the host cannot paint the window, an action is refused as cannot_paint within a second',
+  '§10 while the host cannot paint the window, input is refused as cannot_paint within a second'];
+/** Why the answer page ends a fixture itself. */
+const ARRIVED = 'an approval arrived for a person';
+/** The suite's claims of an app that ends its fixture itself. */
+const FIXTURE_ENDED_CLAIMS = ['the call after the app ended its fixture is refused as fixture_ended, naming the fixture',
+  'an app that ends a fixture itself shows its live state',
+  'releasing a fixture the app ended answers that it ended, with the app\'s reason'];
+/** What has the answer page end its fixture, as an approval arriving would,
+ * once an observation has shown the fixture, while `window.endsObserved` is set. */
+const ENDING = `const observation = globalThis.__x0kUi.observation;
+  globalThis.__x0kUi.observation = (held, call) => {
+    const seen = observation(held, call);
+    if (window.endsObserved && seen.shown?.kind === 'fixture') { window.endsObserved = false; window.approvalArrives(${JSON.stringify(ARRIVED)}); }
+    return seen;
+  };
+  window.endsObserved = true;
+  return 'ok';`;
+
+describe('the answer page in a Tauri app whose window is hidden, or that declines, over its endpoint', () => {
+  let app: Awaited<ReturnType<typeof probeApp>>;
+  before(async () => {
+    if (!existsSync(UI_CONFORMANCE)) throw new Error(`${UI_CONFORMANCE} is not built: cargo build -p x0k-ui-endpoint --bin ui-conformance`);
+    app = await probeApp(false, 1, 'answer-page.html');
+    await app.call({ op: 'eval', body: HEARING });
+    for (let waited = 0; !existsSync(app.endpoint) && waited < ANSWER_MS; waited += 50) await sleep(50);
+  });
+  after(async () => { await app?.close(); });
+  /** One call to the app's endpoint as a driver makes it, timed, or a failure once the plugin's wait has run out. */
+  const driven = async (call: string, argument: object) => {
+    const answered = await app.call({ op: 'endpoint', call, argument });
+    if (answered.fault) throw new Error(answered.fault);
+    if (answered.ms >= UNANSWERED_MS) throw new Error(`did not answer within ${UNANSWERED_MS} ms: ${JSON.stringify(answered.answer)}`);
+    return answered as { answer: any; ms: number };
+  };
+  const heard = async (): Promise<string[]> => JSON.parse((await app.call({ op: 'eval', body: 'return JSON.stringify(heard);' })).value);
+
+  test('a touch source is refused as undeliverable_source, naming its kind, and nothing reaches the page', async () => {
+    const touch = { sources: [{ id: 'finger', kind: 'touch', steps: [{ do: 'pause', ms: 1 }] }] };
+    const { answer } = await driven('perform', touch);
+    assert.deepEqual([answer.refused?.code, answer.refused?.subject], ['undeliverable_source', 'touch'], JSON.stringify(answer));
+  });
+  test('a present the page declines is refused as declined with its reason, and the suite reads its fixture claims as unreachable for now', async () => {
+    await app.call({ op: 'eval', body: 'window.approvalWaiting = true; return "ok";' });
+    const run = await conformance(app.endpoint, ACT);
+    await app.call({ op: 'eval', body: 'window.approvalWaiting = false; return "ok";' });
+    assert.ok(run.held, run.report);
+    assert.match(run.report, /unreachable ui-interfaces §4 presenting a fixture shows it and names its frame: the app declines for now: an approval waits for a person/, run.report);
+  });
+  test('a fixture the page ends itself is told to the driver with its reason, and the suite reaches its fixture_ended claims', async (t) => {
+    await app.call({ op: 'eval', body: ENDING });
+    const run = await conformance(app.endpoint, ACT);
+    t.diagnostic(run.report.trim());
+    assert.ok(run.held, run.report);
+    for (const claim of FIXTURE_ENDED_CLAIMS) assert.match(run.report, new RegExp(`holds +ui-interfaces §4 ${claim}`), run.report);
+    assert.match(run.report, new RegExp(`unreachable ui-interfaces §4 replacing and releasing a fixture: the app ended the fixture: ${ARRIVED}`), run.report);
+  });
+  test('while its window is hidden, an observation refuses its capture as cannot_paint at once, and keeps its layout and state', async () => {
+    await app.call({ op: 'hide' });
+    const { answer, ms } = await driven('observe', { parts: ['capture', 'layout', 'state'] });
+    assert.deepEqual(answer.refused.map((r: any) => [r.part, r.code]), [['capture', 'cannot_paint']], JSON.stringify(answer.refused));
+    assert.ok(answer.layout && answer.state, JSON.stringify(answer));
+    assert.ok(ms < REFUSED_WITHIN_MS, `answered in ${ms.toFixed(0)} ms`);
+  });
+  test('while its window is hidden, an action and input are refused as cannot_paint at once, and the page runs neither', async () => {
+    const before = (await heard()).length;
+    const acted = await driven('invoke', { action: 'counter.bump', args: { by: 1 } });
+    assert.deepEqual([acted.answer.refused?.code, acted.answer.refused?.subject], ['cannot_paint', 'counter.bump'], JSON.stringify(acted.answer));
+    assert.ok(acted.ms < REFUSED_WITHIN_MS, `the action was answered in ${acted.ms.toFixed(0)} ms`);
+    assert.equal((await heard()).length, before, 'the page ran the action');
+    const input = await driven('perform', { sources: [{ id: 'pointer', kind: 'mouse', steps: [{ do: 'pause', ms: 1 }] }] });
+    assert.deepEqual([input.answer.refused?.code, input.answer.refused?.subject], ['cannot_paint', 'ui/input'], JSON.stringify(input.answer));
+    assert.ok(input.ms < REFUSED_WITHIN_MS, `the input was answered in ${input.ms.toFixed(0)} ms`);
+  });
+  test('while its window is hidden, the suite reaches its cannot_paint claims, and they hold', async (t) => {
+    const run = await conformance(app.endpoint, ACT, 120_000);
+    t.diagnostic(run.report.trim());
+    assert.ok(run.held, run.report);
+    for (const claim of CANNOT_PAINT_CLAIMS) assert.match(run.report, new RegExp(`holds +${claim}`), run.report);
+  });
+  test('shown again, the window paints, and an observation answers its capture', async () => {
+    await app.call({ op: 'show' });
+    await sleep(300);
+    const { answer } = await driven('observe', { parts: ['capture', 'layout'] });
+    assert.ok(answer.capture && answer.refused.length === 0, JSON.stringify(answer.refused));
+  });
+});
+```
+
+An app that gives the plugin its endpoint's path, `ui_plugin_at`, is served
+there and nowhere else. The probe app gives it a path in its runtime directory
+but outside `ui-control/`, and its environment pins that directory as
+`X0K_RUNTIME_DIR`, so a plugin that also resolved the default path would make
+`ui-control/` beside it.
+
+<a name="chunk-test-endpoint-at"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#test-endpoint-at`</sub>
+
+```typescript {#test-endpoint-at}
+describe('a Tauri app that gives the plugin its endpoint\'s path', () => {
+  let app: Awaited<ReturnType<typeof probeApp>>;
+  before(async () => {
+    app = await probeApp(false, 1, 'answer-page.html', true);
+    for (let waited = 0; !existsSync(app.endpoint) && waited < ANSWER_MS; waited += 50) await sleep(50);
+  });
+  after(async () => { await app?.close(); });
+
+  test('the plugin serves the endpoint at the path it is given, and binds nothing where the profile would put it', async () => {
+    assert.ok(existsSync(app.endpoint), `nothing at ${app.endpoint}`);
+    const answered = await app.call({ op: 'endpoint', call: 'observe', argument: { parts: ['state'] } });
+    assert.equal(answered.fault, undefined, JSON.stringify(answered));
+    assert.ok(answered.answer.state, JSON.stringify(answered.answer));
+    assert.deepEqual(readdirSync(app.runtime).filter((name) => name !== 'test.sock'), ['given'], 'what the runtime directory holds');
+  });
+});
+```
+
+<a name="chunk-test-file"></a><sub>[`probe-app/tests/probe.test.ts`](../../crates/x0k-ui-tauri/probe-app/tests/probe.test.ts) · `#test-file` · assembles [test-setup](#chunk-test-setup) · [test-percentile](#chunk-test-percentile) · [test-app](#chunk-test-app) · [test-trials](#chunk-test-trials) · [test-input](#chunk-test-input) · [test-claims](#chunk-test-claims) · [test-input-claims](#chunk-test-input-claims) · [test-endpoint](#chunk-test-endpoint) · [test-hidden](#chunk-test-hidden) · [test-endpoint-at](#chunk-test-endpoint-at)</sub>
 
 ```typescript {#test-file file="probe-app/tests/probe.test.ts"}
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { after, before, describe, test } from 'node:test';
@@ -3238,6 +4041,10 @@ for (const compositing of MAC ? [true] : [true, false]) {
 <<test-input-claims>>
 
 <<test-endpoint>>
+
+<<test-hidden>>
+
+<<test-endpoint-at>>
 ```
 
 `cargo test` runs it. The probe app's own test builds the app, names its binary
@@ -3364,11 +4171,95 @@ x0k` was typed: the request that read it had overtaken key events WebKit still
 queued.
 
 Over its endpoint, the probe app showing the answer page holds to the
-conformance suite: `37 claims, 0 broken`, the observation, action and input
-claims among them. Three claims are unreachable, each for its reason: the trace
-claim names no witness, and the two session-end claims need `ui/history` and
-state fixtures, which the library does not offer yet. Two claims were seen red
-for their reason by a mutation:
+conformance suite: `62 claims, 0 broken`, measured on arca in a run of
+`cargo test -p x0k-ui-tauri -p x0k-ui-tauri-probe` where the probe test's 38
+claims all pass. The answer page takes state fixtures, so the suite reaches
+every fixture claim of `ui-interfaces` §4 and they hold: the three refusals
+and that a refused fixture shows nothing, a fixture shown in the frame
+`present` names and named by an observation, input and a read-only action
+under it, the caller's `counter.bump` simulated under it, a second `present`
+replacing the first, a release that shows the live state and a second one
+answered as not standing, the live head where it was after a present and a
+release, and a session's end releasing the fixture it presented. Every source
+kind the model has is delivered, or refused as `undeliverable_source` by its
+own name: `pen` and `touch`. A sequence that names its requester is refused
+as it is unnamed. Eight claims are unreachable, each for its
+reason: the trace claim names no witness; three need a host that cannot paint
+the window, and this window paints, so the hidden window below reaches them;
+and four need a past position, which a page does not hold (the grades of the
+positions a history answers, a position no longer held, going back, and a
+session's end returning from the past).
+
+**A fixture the page ends, a driver's name, and a path the app gives.**
+Measured on arca in one run of `cargo test -p x0k-ui-tauri -p
+x0k-ui-tauri-probe`, where the probe test's 38 claims all pass. With the
+answer page ending its fixture as soon as an observation has shown it, as an
+approval arriving would, the suite reads `61 claims, 0 broken`, and its three
+claims of an app that ends a fixture hold: the call after it is refused as
+`fixture_ended`, naming the fixture, the app shows its live state, and
+releasing the fixture answers `ended` with the page's reason. The input under
+the fixture and the rest of the trip are unreachable with that reason, `the
+app ended the fixture: an approval arrived for a person`. A driver that names
+itself `a driver that names itself` is labelled so: the label's ink runs 164
+CSS pixels right of the pointer at GDK scale 1 and 165 at 2, against 41 and 42
+for the unnamed `probe`. The probe app given a path by `ui_plugin_at` is
+served there, and its runtime directory holds nothing else of the plugin's.
+Each was red first, by a mutation of this chapter:
+
+- with `PageApp::fixture_ended` answering nothing, the endpoint never tells
+  the driver, and the suite runs its trip on the live state:
+  `62 claims, 2 broken`, `BROKEN ui-interfaces §4 an action above read_only
+  takes the disposition the replay policy gives it, and a non_idempotent one
+  is never performed: counter.bump was performed against its real target`;
+- with the pointer sent to the layer without its name, `the named label runs
+  41.17 CSS pixels, the unnamed 41.17`;
+- with `ui_plugin_at` binding where the profile's rule puts the plugin's own
+  name, `nothing at /tmp/x0k-ui-tauri-Wg6rDQ/given/probe.endpoint`.
+
+**A hidden window, and a page that declines.** With the app's window hidden,
+the suite reaches its `cannot_paint` claims and they hold: `24 claims, 0
+broken`, the three `holds §8 / §9 / §10 while the host cannot paint the
+window` among them, and the claims of a painting host unreachable by name,
+`the host cannot paint the window: the window is hidden`. Driven directly,
+the hidden window refuses an observation's capture as `cannot_paint` and
+answers its layout and state, and refuses an action and input as
+`cannot_paint`, each in a test that took 22 ms and 29 ms all told, and the
+page ran neither. A touch source is refused as `undeliverable_source`,
+naming `touch`. With an approval waiting, the suite reads the fixture claims
+as `unreachable ui-interfaces §4 presenting a fixture shows it and names its
+frame: the app declines for now: an approval waits for a person`, and nothing
+is broken. Each was red first, against the plugin and the library as they
+stood before:
+
+- the hidden window's observation and action each ran out the plugin's wait,
+  `did not answer within 5000 ms`: the capture, the layout and the state all
+  refused as `the page did not answer within 5s`, and the action answered
+  `failed` with the same reason;
+- the suite on the hidden window ran 115 s and broke, `BROKEN §9 counter.bump
+  runs and names the frame after it: Failed { reason: "the page did not
+  answer within 5s", frame: None }`;
+- a touch source over the endpoint answered `{"done":{"frame":null}}`, since
+  the plugin refused it to itself after the endpoint had let it through;
+- the declined `present` answered `misfit_state`, `54 claims, 2 broken`
+  (`ui.decline is not a function`, in the library before it).
+
+The suite's history claim was red before the offer named the interface: an
+offer that carried `history` and did not list `ui/history` read
+`BROKEN ui-interfaces §5 the offer says what it holds of its history exactly
+when it names ui/history: Unasked`. Two mutations show the fixture claims red
+for their reason over the endpoint:
+
+- with the answer page's `present` writing the fixture into its live store,
+  `BROKEN ui-interfaces §4 a fixture never changes the live state: presenting
+  and releasing leaves its head where it was: Some("r6") became Some("r7")`;
+- with `PageApp::shown` answering `live` while a fixture stands, the endpoint
+  ran the caller's action:
+  `BROKEN ui-interfaces §4 an action above read_only takes the disposition the
+  replay policy gives it, and a non_idempotent one is never performed:
+  counter.bump was performed against its real target`.
+
+Before the page took fixtures the suite read `37 claims, 0 broken` here, and
+two claims were seen red for their reason by a mutation:
 
 - with the endpoint handing a refused invoke to the app as well, the suite
   still read `37 claims, 0 broken`, since the library refuses the unknown action
@@ -3387,8 +4278,9 @@ centre arrives at the button trusted; a click into the field moves focus to
 it with a trusted `focus`, and six trusted `keydown`s type `Hi x0k`; a wheel
 over the box scrolls it 120 CSS pixels for a delta of 120 with trusted `wheel`
 events; a touch source is refused before any of the sequence runs. Over its
-endpoint, the probe app holds to the conformance suite: `37 claims, 0 broken`,
-with the same three claims unreachable as on Linux.
+endpoint, the probe app held to the conformance suite: `37 claims, 0 broken`,
+with the same three claims unreachable as on Linux. That run predates the
+page's fixtures; the fixture claims have not been run on the Mac.
 
 Each claim was seen red for its reason on the Mac:
 
@@ -3425,9 +4317,12 @@ label `probe` beside it, to the arrow's left, since the button lies near the
 window's right edge.
 
 The probe test runs on the Mac only while its window can render. With the
-screen locked and the display asleep, WKWebView renders no frame, the hold's
-settle never ends, and every request after the first observation goes
-unanswered (`the page did not answer within 5s`).
+screen locked and the display asleep, WKWebView renders no frame. Before the
+library bounded its waits, the hold's settle then never ended, and every
+request after the first observation went unanswered (`the page did not answer
+within 5s`). Now that window should be refused as `cannot_paint` at once, by
+the page's visibility or the window's state, which the Mac has yet to show
+(below).
 
 **What WKWebView's snapshot shows.** The webview design left open whether
 `takeSnapshot` paints afresh or shows the compositor's last frame, and so
@@ -3498,3 +4393,38 @@ open. So is a look an app declares for the drawing (`x0k:design/ui-driver`).
 On macOS, two more. A key's code is right only on a US layout and for letters, digits and
 named keys, and every click is a single click, so a double click is two single
 ones. The Windows webview, WebView2 through CDP, is not built.
+
+**The Mac must verify the covered-window switches** ("Keeping a covered
+window painting"). Nothing here is measured on macOS: arca has no
+`aarch64-apple-darwin` standard library, so the macOS code was not even
+compiled. The 0.2 release does not wait on it; a patch follows. On the Mac,
+in the `x0k-ui-tauri` crate:
+
+1. `cargo test -p x0k-ui-tauri`: it compiles, and
+   `wkwebview_still_answers_the_private_occlusion_switch` holds.
+2. Start the probe app on the answer page with the default
+   `CoveredPainting::WhileDriven`, connect a driver (`ui-conformance` on its
+   endpoint, or the MCP driver), and check the log says
+   `ui_tauri.painting.switched on=true occlusion=true scheduling=true`.
+3. With the driver connected, put the window in each state in turn and time
+   one `observe` of `[capture, layout, state]`, one `invoke` of
+   `counter.read` and one mouse `pause` `perform`:
+   - **covered** by another app's window: all three answer, the capture
+     showing the page;
+   - **on another Space**: all three answer;
+   - **minimised**: the capture refused as `cannot_paint`, layout and state
+     answered, and the action and input refused as `cannot_paint`, each in
+     well under a second;
+   - **screen locked**, and **display asleep** (`pmset displaysleepnow`): the
+     same, answered or refused as `cannot_paint` at once, never `did not
+     answer`.
+4. If the covered or other-Space window does not answer in step 3 (the
+   before-attach caveat), repeat it with the probe app built with
+   `ui_plugin_with(APP, "probe", CoveredPainting::FromCreation)`, and record
+   which mode works. If only `FromCreation` does, make it the default.
+5. Disconnect the last driver and check `on=false` in the log; a covered
+   window then reads `hidden` again and is refused as `cannot_paint`.
+6. Rerun the probe test as a whole three times (the unreliable runs above,
+   50c8103b): with the switches on while the suite drives it, the runs that
+   went unanswered should now answer, or refuse as `cannot_paint` at once.
+   That occlusion was their cause is inferred.

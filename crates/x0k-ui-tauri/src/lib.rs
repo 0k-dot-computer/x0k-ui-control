@@ -17,10 +17,19 @@ mod snapshot;
 #[cfg(target_os = "macos")]
 #[path = "snapshot_macos.rs"]
 mod snapshot;
+#[cfg(target_os = "macos")]
+#[path = "painting_macos.rs"]
+mod painting;
+/// WebKitGTK has no switch that keeps a covered window painting, so there is
+/// nothing to turn.
+#[cfg(not(target_os = "macos"))]
+mod painting {
+    pub(crate) fn keep_painting<R: tauri::Runtime>(_webview: &tauri::Webview<R>, _on: bool) {}
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use endpoint::{PageApp, HELD_FRAMES, UI_GLOBAL};
 pub use held::{held_capture, Held, HeldCapture, HoldingHost, Refused, HOLD_TRIES};
-pub use page::{endpoint_socket_path, ui_plugin, PageError, PageHold, PageHost, Pending, PAGE_GLOBAL, PAGE_SCRIPT, PLUGIN};
+pub use page::{endpoint_socket_path, ui_plugin, ui_plugin_at, ui_plugin_with, CoveredPainting, PageError, PageHold, PageHost, Pending, PAGE_GLOBAL, PAGE_SCRIPT, PLUGIN};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use snapshot::Snapshot;

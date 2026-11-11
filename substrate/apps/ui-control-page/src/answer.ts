@@ -2,33 +2,81 @@
 import type { InputLook } from './drawn-layer.ts';
 import type { HeldCapture } from './held-capture.ts';
 import type { Hold } from './hold.ts';
-import { type DeclaredState, type Observation, type ObserveCall, type PageRead, type PinnedRead, type Png, observation, wholeCaptureOnly } from './observation.ts';
+import { type DeclaredState, type Observation, type ObserveCall, type PageRead, type PinnedRead, type Png, type Shown, observation, wholeCaptureOnly } from './observation.ts';
 import type { Walk } from './walk.ts';
 
 /** How reversible an action's effect is. */
 export type SideEffect = 'read_only' | 'idempotent_write' | 'non_idempotent';
 /** What a page says of one action. Shapes are x0k-datum's spelling as JSON. */
 export interface ActionSpec { args?: unknown; result?: unknown; effect?: SideEffect; description?: string }
+/** What a page says of its state. */
+export interface StateDeclaration {
+  /** The state's shape, in x0k-datum's spelling as JSON. */
+  shape: unknown;
+  /** The state the page shows: its live state, or the fixture that stands. */
+  read: () => unknown;
+  /** The live state's head, when the page keeps one. */
+  head?: () => string;
+  /** Show `state` in place of what the page shows, replacing any fixture
+   * that stands. Its host has checked `state` against `shape`. It may decline
+   * for now by throwing or returning `ui.decline(reason)`. */
+  present?: (state: unknown) => unknown;
+  /** Show the live state again. */
+  release?: () => unknown;
+}
 /** What a page says of itself when it installs the library. */
 export interface Declaration {
   app: string;
-  state?: { shape: unknown; read: () => unknown; head?: () => string };
+  state?: StateDeclaration;
   /** How the page's host draws a driver's input over it. */
   look?: InputLook;
+  /** Why the page declines `call` for now while a fixture stands, such as
+   * an approval that waits for a person; nothing lets it run. */
+  declines?: (call: Declinable) => string | null | undefined;
 }
+/** A call a page may decline while a fixture stands: an action by its name,
+ * or a sequence of input. */
+export type Declinable = { kind: 'invoke'; action: string } | { kind: 'perform' };
+/** A page's word that it declines a call for now, and why. */
+export interface Decline { readonly reason: string }
 /** The page's handle on the library. */
 export interface Ui {
   /** Declare the action `name`, run by `run` with its arguments. */
   action(name: string, spec: ActionSpec, run: (args: any) => unknown): Ui;
   /** The page's word that it changed in a way the library cannot see. */
   changed(): void;
+  /** The handle of the state fixture that stands, or `null` while the page
+   * shows its live state. */
+  fixture(): string | null;
+  /** Hear `fixture()` change: `listener` is called with the new handle, or
+   * `null` when the page shows its live state again. Answers the function
+   * that stops it hearing. */
+  onFixture(listener: (handle: string | null) => void): () => void;
+  /** A decline for `reason`, which a `present` hook throws or returns to
+   * decline the fixture for now. */
+  decline(reason: string): Decline & Error;
+  /** End the fixture that stands, for `reason`, such as an approval that
+   * arrives for a person: the page's `release` hook runs and it shows its
+   * live state again. The session that presented the fixture is told why on
+   * its next call. Settles once one rendering update has run after it; does
+   * nothing while no fixture stands. */
+  endFixture(reason: string): Promise<void>;
 }
 /** An action as the offer lists it. */
 export interface Offered { name: string; description: string; args: unknown; result: unknown; side_effect: SideEffect }
-/** What a page declares of itself: `x0k-ui-protocol`'s `page::Declared`. */
-export interface Declared { app: string; instance: string; actions: Offered[]; state?: DeclaredState }
-/** The run of an action: its outcome and the frame after it. */
-export type Ran = { done: { result: unknown; frame: string } } | { failed: { reason: string; frame: string } };
+/** What a page declares of itself: `x0k-ui-protocol`'s `page::Declared`,
+ * and whether the page takes state fixtures, which a host that makes the
+ * fixture checks reads beside it. */
+export interface Declared { app: string; instance: string; actions: Offered[]; state?: DeclaredState; fixtures: boolean }
+/** The run of an action: its outcome and the frame after it, or `null` and
+ * why when the page could not paint one. */
+export type Ran = { done: { result: unknown; frame: string | null; unpainted?: string } } | { failed: { reason: string; frame: string | null; unpainted?: string } };
+/** A call refused, as the protocol spells a refusal. */
+export interface Refusal { code: string; subject?: string; why: string }
+/** `present`'s answer, as the protocol spells it. */
+export type Presented = { presented: { handle: string; frame: string | null; unpainted?: string } } | { refused: Refusal };
+/** `release`'s answer, as the protocol spells it. */
+export type Released = { released: { frame: string | null; unpainted?: string } } | { not_standing: { handle: string } } | { ended: { handle: string; reason: string } };
 /** The library as a page and its host reach it. */
 export interface Answers {
   /** Declare the page's app and state. */
@@ -40,6 +88,20 @@ export interface Answers {
   /** Run the declared action `name` with `args`, and answer once one
    * rendering update has run after it. */
   run(name: string, args: unknown): Promise<Ran>;
+  /** Have the page show `state`, a fixture its host checked, and answer once
+   * one rendering update has run after it. */
+  present(state: unknown): Promise<Presented>;
+  /** Release the fixture `handle`, and answer once one rendering update has
+   * run after the page shows its live state again. */
+  release(handle: string): Promise<Released>;
+  /** The handle of the fixture that stands, or `null`: the page's own `fixture()`. */
+  fixture(): string | null;
+  /** Why the page cannot paint now, or `null` while it paints. */
+  cannotPaint(): string | null;
+  /** Why the page declines `call` for now, or `null`: its declaration's `declines`. */
+  declines(call: Declinable): string | null;
+  /** Why the page ended the fixture `handle` itself, or `null`. */
+  fixtureEnded(handle: string): string | null;
   /** The observation of `call` a host's hold around its capture makes. */
   observation(held: HeldCapture<PinnedRead, Png>, call: ObserveCall): Observation;
   /** Why a host that captures the whole page at its own scale cannot answer
@@ -51,6 +113,12 @@ export interface Answers {
 interface Kept { offered: Offered; run: (args: any) => unknown }
 
 const UNDECLARED_EFFECT: SideEffect = 'non_idempotent';
+const DECLINE = Symbol.for('x0k.ui-control.decline');
+/** A decline for `reason`, as `ui.decline` makes it. */
+const decline = (reason: string): Decline & Error => Object.assign(new Error(reason), { reason, [DECLINE]: true });
+const declined = (value: unknown): value is Decline => typeof value === 'object' && value !== null && (value as any)[DECLINE] === true;
+/** A frame named, or `null` and why when the page could not paint it. */
+const frameOr = (unpainted: string | undefined, epoch: number) => (unpainted ? { frame: null, unpainted } : { frame: String(epoch) });
 const kept = (name: string, spec: ActionSpec, run: (args: any) => unknown): Kept => ({
   offered: { name, description: spec.description ?? '', args: spec.args ?? { kind: 'null' }, result: spec.result ?? { kind: 'any' }, side_effect: spec.effect ?? UNDECLARED_EFFECT },
   run,
@@ -64,13 +132,46 @@ export function installAnswers(win: Window, hold: Hold, walk: Walk): Answers {
   const actions = new Map<string, Kept>();
   const instance = instanceId();
 
-  const stateNow = (): DeclaredState | undefined => {
+  /** The fixture that stands: its handle, and the live state as it stood when
+   * the first fixture was presented. */
+  let standing: { handle: string; live: DeclaredState | undefined } | null = null;
+  /** The fixture the page last ended itself, and why. */
+  let ended: { handle: string; reason: string } | null = null;
+  let presented = 0;
+  const listeners = new Set<(handle: string | null) => void>();
+
+  const takesFixtures = () => typeof declaration.state?.present === 'function' && typeof declaration.state?.release === 'function';
+  /** The state the page shows, as its `read()` reads it. */
+  const readNow = (head: boolean): DeclaredState | undefined => {
     const state = declaration.state;
-    return state && { shape: state.shape, value: state.read() ?? null, head: state.head?.() };
+    return state && { shape: state.shape, value: state.read() ?? null, head: head ? state.head?.() : undefined };
   };
-  const declared = (): Declared => ({ app: declaration.app, instance, actions: [...actions.values()].map(({ offered }) => offered), state: stateNow() });
-  const read = (call: ObserveCall): PageRead => ({ layout: walk.layout(), state: call.parts.includes('state') ? stateNow() : undefined });
-  const rendered = () => new Promise<void>((done) => win.requestAnimationFrame(() => done()));
+  /** The live state: kept while a fixture stands, else what the page shows. */
+  const liveNow = () => (standing ? standing.live : readNow(true));
+  /** The state the page shows, with the live head only while it is live. */
+  const showingNow = () => readNow(!standing);
+  /** What the page shows, as an observation names it. */
+  const shownNow = (): Shown => (standing ? { kind: 'fixture', handle: standing.handle } : { kind: 'live' });
+  const fixture = () => standing?.handle ?? null;
+  /** Stand `next`, and tell the page's listeners when the handle changed. */
+  const stand = (next: typeof standing) => {
+    const was = fixture();
+    standing = next;
+    if (fixture() === was) return;
+    for (const listener of [...listeners]) {
+      try { listener(fixture()); } catch (e) { win.setTimeout(() => { throw e; }); }
+    }
+  };
+
+  const declared = (): Declared => ({
+    app: declaration.app,
+    instance,
+    actions: [...actions.values()].map(({ offered }) => offered),
+    state: liveNow(),
+    fixtures: takesFixtures(),
+  });
+  const read = (call: ObserveCall): PageRead => ({ layout: walk.layout(), shown: shownNow(), state: call.parts.includes('state') ? showingNow() : undefined });
+  const rendered = () => hold.rendered();
   const run = async (name: string, args: unknown): Promise<Ran> => {
     let outcome: { result: unknown } | { reason: string };
     try {
@@ -80,20 +181,72 @@ export function installAnswers(win: Window, hold: Hold, walk: Walk): Answers {
     } catch (e) {
       outcome = { reason: e instanceof Error ? e.message : String(e) };
     }
-    await rendered();
-    const frame = String(hold.epoch());
-    return 'result' in outcome ? { done: { result: outcome.result, frame } } : { failed: { reason: outcome.reason, frame } };
+    const frame = frameOr(await rendered(), hold.epoch());
+    return 'result' in outcome ? { done: { result: outcome.result, ...frame } } : { failed: { reason: outcome.reason, ...frame } };
   };
+  const cannotPaint = () => hold.unpainted() ?? null;
+  const declines = (call: Declinable) => declaration.declines?.(call) ?? null;
+
+  const present = async (state: unknown): Promise<Presented> => {
+    if (!takesFixtures()) return { refused: { code: 'no_fixtures', subject: 'ui/history', why: 'the page takes no state fixtures' } };
+    const was = standing;
+    const handle = `${instance}/fixture/${++presented}`;
+    stand({ handle, live: was ? was.live : liveNow() });
+    let answered: unknown;
+    try {
+      answered = await declaration.state!.present!(state);
+    } catch (e) {
+      answered = e;
+      if (!declined(e)) {
+        stand(was);
+        throw e;
+      }
+    }
+    if (declined(answered)) {
+      stand(was);
+      return { refused: { code: 'declined', subject: 'ui/history', why: answered.reason } };
+    }
+    hold.changed();
+    return { presented: { handle, ...frameOr(await rendered(), hold.epoch()) } };
+  };
+  const release = async (handle: string): Promise<Released> => {
+    if (standing?.handle !== handle) return ended?.handle === handle ? { ended: { ...ended } } : { not_standing: { handle } };
+    await declaration.state!.release!();
+    stand(null);
+    hold.changed();
+    return { released: frameOr(await rendered(), hold.epoch()) };
+  };
+  const endFixture = async (reason: string): Promise<void> => {
+    const handle = standing?.handle;
+    if (handle === undefined) return;
+    await declaration.state!.release!();
+    if (standing?.handle !== handle) return;
+    ended = { handle, reason };
+    stand(null);
+    hold.changed();
+    await rendered();
+  };
+  const fixtureEnded = (handle: string) => (ended?.handle === handle ? ended.reason : null);
 
   const ui: Ui = {
     action(name, spec, run_) { actions.set(name, kept(name, spec, run_)); hold.changed(); return ui; },
     changed: () => hold.changed(),
+    fixture,
+    onFixture(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    decline,
+    endFixture,
   };
   return {
     install(given) { declaration = given; hold.drawn.look(given.look ?? {}); hold.changed(); return ui; },
     declared,
     read,
     run,
+    present,
+    release,
+    fixture,
+    cannotPaint,
+    declines,
+    fixtureEnded,
     observation,
     wholeCaptureOnly,
   };

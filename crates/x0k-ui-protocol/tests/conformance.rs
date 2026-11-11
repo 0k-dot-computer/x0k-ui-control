@@ -7,17 +7,18 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 use x0k_datum::Datum;
 use x0k_ui_protocol::act::{check_invoke, Grant, Invoke};
-use x0k_ui_protocol::fixture::{check_present, merge_patch, PresentCall};
+use x0k_ui_protocol::fixture::{check_present, merge_patch, PresentCall, ReleaseAnswer};
 use x0k_ui_protocol::history::{
     check_history, check_history_offer, check_navigate, check_while_shown, History, HistoryCall,
     NavigateCall, Shown,
 };
-use x0k_ui_protocol::input::{check_perform, HeldFrame, Perform};
+use x0k_ui_protocol::input::{check_delivers, check_perform, HeldFrame, Perform};
 use x0k_ui_protocol::offer::SideEffect;
-use x0k_ui_protocol::observe::{check_observation, Observation, ObserveCall, StatePart};
+use x0k_ui_protocol::observe::{check_observation, while_cannot_paint, Observation, ObserveCall, StatePart};
 use x0k_ui_protocol::offer::Offer;
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose};
 use x0k_ui_protocol::shapes::operation_class;
+use x0k_ui_protocol::Refused;
 
 /// Whether `answer` holds everything `expect` names.
 fn holds(expect: &Value, answer: &Value) -> bool {
@@ -80,6 +81,30 @@ fn run(check: &str, input: &Value) -> Value {
                 Err(refused) => json!({"refused": refused}),
             }
         }
+        "input.delivers" => {
+            let offer: Offer = field(input, "offer");
+            let frames: Vec<HeldFrame> = field(input, "frames");
+            let perform: Perform = field(input, "perform");
+            let delivers: Vec<String> = field(input, "delivers");
+            let delivers: Vec<&str> = delivers.iter().map(String::as_str).collect();
+            match check_perform(&offer, &frames, &perform).and_then(|_| check_delivers(&perform, &delivers)) {
+                Ok(()) => json!({"delivered": true}),
+                Err(refused) => json!({"refused": refused}),
+            }
+        }
+        "observe.while_cannot_paint" => {
+            let call: ObserveCall = field(input, "call");
+            let (asked, refused) = while_cannot_paint(&call, "the window is minimised");
+            json!({"asks": asked.parts, "refused": refused})
+        }
+        "refusal.read" => match serde_json::from_value::<Refused>(input["refused"].clone()) {
+            Ok(refused) => json!({"reads": true, "refused": refused}),
+            Err(_) => json!({"reads": false}),
+        },
+        "fixture.release_read" => match serde_json::from_value::<ReleaseAnswer>(input["answer"].clone()) {
+            Ok(answer) => json!({"reads": true, "answer": answer}),
+            Err(_) => json!({"reads": false}),
+        },
         "history.fit" => {
             let call: HistoryCall = field(input, "call");
             let history: History = field(input, "history");

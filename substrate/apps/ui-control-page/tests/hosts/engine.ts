@@ -19,6 +19,11 @@ export interface Engine {
   evaluate(body: string): Promise<string>;
   /** The platform's capture of the page as it shows now. */
   capture(): Promise<Image>;
+  /** Hide the page from the screen, as a window that does not present it:
+   * its `document.visibilityState` reads `hidden`. */
+  hide(): Promise<void>;
+  /** Show the page again after `hide`. */
+  show(): Promise<void>;
   close(): Promise<void>;
 }
 

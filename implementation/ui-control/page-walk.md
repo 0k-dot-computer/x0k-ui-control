@@ -94,17 +94,23 @@ export interface StatePart { value: unknown; head: string; fingerprint: string }
 /** The state as a page declares it: `x0k-ui-protocol`'s `page::DeclaredState`. */
 export interface DeclaredState { shape: unknown; value: unknown; head?: string }
 
+/** What a frame shows (`ui-interfaces` §3): the live state, or a state
+ * fixture by its handle. */
+export type Shown = { kind: 'live' } | { kind: 'fixture'; handle: string };
+
 /** What the page reads in one task for an observation: its layout, always,
- * since the viewport sets the scale, and its state as declared when the call
- * asks for it. */
+ * since the viewport sets the scale, what it shows, and its state as declared
+ * when the call asks for it. */
 export interface PageRead {
   layout: PageLayout;
+  shown?: Shown;
   state?: DeclaredState;
 }
 
 /** A page's read with its state made the protocol's state part by its host. */
 export interface PinnedRead {
   layout: PageLayout;
+  shown?: Shown;
   state?: StatePart;
 }
 
@@ -114,8 +120,8 @@ export interface Observation {
   capture?: { png: number[]; width: number; height: number; scale_factor: number };
   layout?: LayoutNode;
   state?: StatePart;
-  refused: { part: Part; why: string }[];
-  shown: { kind: 'live' };
+  refused: { part: Part; code?: string; why: string }[];
+  shown: Shown;
 }
 
 /** The call the walk's own test makes. */
@@ -143,7 +149,8 @@ export function wholeCaptureOnly(call: ObserveCall): string | undefined {
 
 /** The observation a held capture makes for `call`: the walk's read in the
  * capture's pixels, at the scale the capture shows, with the parts it asks
- * for, and the state as the host pinned it. */
+ * for, the state as the host pinned it, and what the page showed when it was
+ * read, live unless the read names a fixture. */
 export function observation(held: HeldCapture<PinnedRead, Png>, call: ObserveCall = CAPTURE_AND_LAYOUT): Observation {
   const { viewport, ratio, root } = held.read.layout;
   const capture = held.capture;
@@ -165,7 +172,7 @@ export function observation(held: HeldCapture<PinnedRead, Png>, call: ObserveCal
     layout: asked('layout') ? node(root) : undefined,
     state: asked('state') ? held.read.state : undefined,
     refused,
-    shown: { kind: 'live' },
+    shown: held.read.shown ?? { kind: 'live' },
   };
 }
 ```

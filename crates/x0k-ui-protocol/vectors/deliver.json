@@ -1,0 +1,141 @@
+{
+  "clause": "ui-control-channel §10",
+  "check": "input.delivers",
+  "about": "A source of a kind the model has and the app's host cannot deliver refuses the whole sequence as undeliverable_source, naming the kind, before any of it runs. A kind the model does not have is still unknown_source, since check_perform runs first. delivers is the source kinds the host delivers. The answer is {delivered: true} or {refused}.",
+  "vectors": [
+    {
+      "name": "a touch on a host that delivers no touch is undeliverable, naming the kind",
+      "input": {
+        "offer": {
+          "app": "demo",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            }
+          ]
+        },
+        "frames": [],
+        "delivers": [
+          "mouse",
+          "key",
+          "wheel"
+        ],
+        "perform": {
+          "sources": [
+            {
+              "id": "m",
+              "kind": "mouse",
+              "steps": [
+                {
+                  "do": "pause",
+                  "ms": 1
+                }
+              ]
+            },
+            {
+              "id": "finger",
+              "kind": "touch",
+              "steps": [
+                {
+                  "do": "pause",
+                  "ms": 1
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "undeliverable_source",
+          "subject": "touch"
+        }
+      }
+    },
+    {
+      "name": "a kind the model does not have is unknown_source, not undeliverable",
+      "input": {
+        "offer": {
+          "app": "demo",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            }
+          ]
+        },
+        "frames": [],
+        "delivers": [
+          "mouse",
+          "key",
+          "wheel"
+        ],
+        "perform": {
+          "sources": [
+            {
+              "id": "g",
+              "kind": "gamepad",
+              "steps": [
+                {
+                  "do": "pause",
+                  "ms": 1
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unknown_source",
+          "subject": "gamepad"
+        }
+      }
+    },
+    {
+      "name": "a sequence of kinds the host delivers is delivered",
+      "input": {
+        "offer": {
+          "app": "demo",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            }
+          ]
+        },
+        "frames": [],
+        "delivers": [
+          "mouse",
+          "key",
+          "wheel"
+        ],
+        "perform": {
+          "sources": [
+            {
+              "id": "k",
+              "kind": "key",
+              "steps": [
+                {
+                  "do": "key_down",
+                  "key": "a"
+                },
+                {
+                  "do": "key_up",
+                  "key": "a"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "delivered": true
+      }
+    }
+  ]
+}
