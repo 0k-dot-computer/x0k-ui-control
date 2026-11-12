@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/page-hold.md",
-  "source_hash": "6585a00744629016",
+  "source_hash": "9a14e0e04f2c9fc9",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "substrate/apps/ui-control-page/src/hold.ts",
-          "hash": "3abad7411ce42315"
+          "hash": "c190a046d30e4518"
         },
         {
           "path": "substrate/apps/ui-control-page/src/drawn-layer.ts",
-          "hash": "88fc1778e5123079"
+          "hash": "8e01a0e570470911"
         },
         {
           "path": "substrate/apps/ui-control-page/src/held-capture.ts",
@@ -29,11 +29,11 @@
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/probe-judge.ts",
-          "hash": "426821652e2f6e9f"
+          "hash": "c88f522650a61d03"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/probe.test.ts",
-          "hash": "3244b1882d6812ce"
+          "hash": "8d8ef780365317c9"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/chromium.ts",

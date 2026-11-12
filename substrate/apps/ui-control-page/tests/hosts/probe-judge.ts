@@ -11,6 +11,9 @@ export interface ProbeRead { count: number; mover: number; slider: number; width
 /** The colour the drawing layer inks a driver's pointer in. */
 export const DRAWN_INK = [124, 58, 237];
 
+/** The colour of the fixture mark's band: `x0k-ui-protocol`'s `FIXTURE_INK`. */
+export const FIXTURE_INK = [245, 158, 11];
+
 /** A script that, in one hold, paints the host's drawing with a pointer at
  * (`x`, `y`) in CSS pixels and answers what the page made of it: whether the
  * layer is in the document, whether the layout walk was the same with the

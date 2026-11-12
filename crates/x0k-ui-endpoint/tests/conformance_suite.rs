@@ -15,6 +15,7 @@ use x0k_ui_endpoint::conformance::{
     Verdict,
 };
 use x0k_ui_endpoint::server::{listen, serve_connection, Declinable, Endpoint, UiApp};
+use x0k_ui_endpoint::takeover::{HoldAnswer, TakeoverPolicy};
 use x0k_ui_endpoint::wire::to_wire;
 use x0k_ui_endpoint::{
     shapes, InvokeAnswer, PerformAnswer, PresentAnswer, ReleaseAnswer, INVOKE, OFFER, PERFORM, PRESENT, RELEASE,
@@ -30,6 +31,7 @@ use x0k_ui_protocol::observe::{
     Bounds, Capture, LayoutNode, Observation, ObserveCall, Part, StatePart,
 };
 use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY};
+use x0k_ui_protocol::presentation::{FIXTURE_BAND, FIXTURE_INK};
 use x0k_ui_protocol::replay::{Covers, PolicyEntry, ReplayDisposition};
 use x0k_ui_protocol::shapes::{interface, interfaces, shape_pin};
 use x0k_ui_protocol::{Refused, RefusalCode};
@@ -78,6 +80,12 @@ enum Flaw {
     PresentsFrameOnly,
     /// Says it draws input, and answers a watchable sequence at once.
     HastyPace,
+    /// Draws the fixture mark into the frame alone too.
+    MarkInFrame,
+    /// Draws no fixture mark.
+    Unmarked,
+    /// Marks a fixture a dev instance was asked to leave unmarked.
+    MarksRegardless,
 }
 
 /// A condition `Faithful` keeps its promises under.
@@ -96,12 +104,18 @@ enum Condition {
     /// It ends a fixture itself once it has been observed, as when an
     /// approval arrives for a person.
     EndsFixture,
+    /// Its host holds a takeover, and no person is at the window to answer.
+    HoldsTakeover,
+    /// It runs as a dev instance.
+    DevInstance,
 }
 
 /// Why `Faithful` declines.
 const APPROVAL: &str = "an approval waits for a person";
 /// Why `Faithful` ends a fixture itself.
 const ARRIVED: &str = "an approval arrived for a person";
+/// Why `Faithful` declines a driver's input, when it does.
+const PERSON: &str = "the person is using the window";
 
 /// The positions `Faithful` holds, of the six it has had.
 const OLDEST: u64 = 3;
@@ -121,6 +135,10 @@ struct Faithful {
     beside: Mutex<Vec<String>>,
     /// The fixture it ended itself, under `EndsFixture`.
     ended: Mutex<Option<String>>,
+    /// Whether it declines every driver's sequence for now, whatever it shows.
+    declines_input: bool,
+    /// The fixture its host marks over the window, drawn while it is shown.
+    marked: Mutex<Option<String>>,
 }
 
 /// `Faithful`'s state shape: a closed record of one count.
@@ -141,11 +159,19 @@ impl Faithful {
             fixture: Mutex::new(Value::Null),
             beside: Mutex::new(Vec::new()),
             ended: Mutex::new(None),
+            declines_input: false,
+            marked: Mutex::new(None),
         }
     }
 
     fn under(condition: Condition) -> Self {
         Faithful { condition, ..Faithful::new(Flaw::None) }
+    }
+
+    /// The same app, declining every driver's sequence for now, as while a
+    /// person uses the window.
+    fn declining_input(self) -> Self {
+        Faithful { declines_input: true, ..self }
     }
 
     fn live(&self) -> StatePart {
@@ -156,16 +182,36 @@ impl Faithful {
     fn showing(&self) -> Shown {
         self.shown.lock().expect("the lock").clone()
     }
+
+    /// Whether a capture, of the frame alone when `frame_only`, shows the
+    /// fixture mark: while the fixture its host marks is shown, in the host's
+    /// drawing alone.
+    fn shows_mark(&self, frame_only: bool) -> bool {
+        let marked = self.marked.lock().expect("the lock").clone();
+        let standing = matches!((marked, self.showing()), (Some(marked), Shown::Fixture { handle }) if marked == handle);
+        standing && (!frame_only || self.flaw == Flaw::MarkInFrame)
+    }
 }
 
 const WIDTH: u32 = 400;
 const HEIGHT: u32 = 300;
 
-fn png_of(width: u32, height: u32) -> Vec<u8> {
-    let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13];
-    png.extend_from_slice(b"IHDR");
-    png.extend_from_slice(&width.to_be_bytes());
-    png.extend_from_slice(&height.to_be_bytes());
+/// A white PNG `width` by `height`, with the fixture mark's band around it
+/// when `marked`.
+fn png_of(width: u32, height: u32, marked: bool) -> Vec<u8> {
+    let band = FIXTURE_BAND as u32;
+    let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let edge = x < band || y < band || x + band >= width || y + band >= height;
+            rgb.extend_from_slice(&if marked && edge { FIXTURE_INK } else { [255, 255, 255] });
+        }
+    }
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header().and_then(|mut writer| writer.write_image_data(&rgb)).expect("a PNG");
     png
 }
 
@@ -181,6 +227,7 @@ fn layout(width: f64) -> LayoutNode {
         enabled: true,
         focused: false,
         interactive: false,
+        opacity: None,
         action: None,
         source: None,
         composition: None,
@@ -210,6 +257,8 @@ fn offer_of(head: u64, newest: u64) -> Offer {
         replay_policy: Vec::new(),
         sandboxes: Vec::new(),
         input: Some(InputOffer { presents: true, takeover: false }),
+        dev_instance: false,
+        screencast: None,
     }
 }
 
@@ -233,7 +282,15 @@ impl UiApp for Faithful {
                 sandbox: Some("scratch".to_string()),
             }];
         }
+        if self.condition == Condition::HoldsTakeover {
+            offer.input = Some(InputOffer { presents: true, takeover: true });
+        }
+        offer.dev_instance = self.condition == Condition::DevInstance;
         offer
+    }
+
+    async fn hold_takeover(&self, _requester: &str) -> bool {
+        self.condition == Condition::HoldsTakeover
     }
 
     async fn observe(&self, call: ObserveCall) -> Observation {
@@ -244,7 +301,7 @@ impl UiApp for Faithful {
         let whole_frame = call.scale.is_none() && call.region.is_none();
         let capture = wants(Part::Capture) && whole_frame;
         let answer = Capture {
-            png: if self.flaw == Flaw::CaptureSize { png_of(1, 1) } else { png_of(WIDTH, HEIGHT) },
+            png: if self.flaw == Flaw::CaptureSize { png_of(1, 1, false) } else { png_of(WIDTH, HEIGHT, self.shows_mark(call.frame_only)) },
             width: WIDTH,
             height: HEIGHT,
             scale_factor: 1.0,
@@ -357,11 +414,13 @@ impl UiApp for Faithful {
         Some(self.live())
     }
 
-    async fn present(&self, state: Value) -> PresentAnswer {
+    async fn present(&self, state: Value, marked: bool) -> PresentAnswer {
         if self.condition == Condition::DeclinesFixtures {
             return PresentAnswer::Refused(Refused::new(RefusalCode::Declined, UI_HISTORY, APPROVAL));
         }
         let handle = format!("x{}", self.presented.fetch_add(1, Ordering::Relaxed) + 1);
+        let marks = (marked || self.flaw == Flaw::MarksRegardless) && self.flaw != Flaw::Unmarked;
+        *self.marked.lock().expect("the lock") = marks.then(|| handle.clone());
         if self.flaw == Flaw::FixtureMovesLive {
             self.head.fetch_add(1, Ordering::Relaxed);
         }
@@ -404,6 +463,10 @@ impl UiApp for Faithful {
         (self.condition == Condition::DeclinesUnderFixture).then(|| APPROVAL.to_string())
     }
 
+    async fn declines_input(&self, _requester: &str, _perform: &Perform) -> Option<String> {
+        self.declines_input.then(|| PERSON.to_string())
+    }
+
     async fn fixture_ended(&self, handle: &str) -> Option<String> {
         let ended = self.ended.lock().expect("the lock");
         (ended.as_deref() == Some(handle)).then(|| ARRIVED.to_string())
@@ -425,6 +488,38 @@ async fn report_of_app(app: Faithful) -> Report {
     tokio::spawn(serve_connection(theirs, Arc::new(Endpoint::new(app, grant))));
     let client = UiClient::open(ours).await.expect("a session");
     run(&client, &acting()).await.expect("a report")
+}
+
+const CONFIGURED_TAKEOVER: &str = "a takeover is answered as the host's configuration says, before any of the sequence runs";
+
+/// The verdict on the configured takeover of an app whose host holds one,
+/// configured by `policy`, when the runner says it was configured to `said`.
+async fn configured_takeover(policy: TakeoverPolicy, said: Option<HoldAnswer>) -> Verdict {
+    configured_takeover_of(Faithful::under(Condition::HoldsTakeover), policy, said).await
+}
+
+/// The verdict on the configured takeover of `app`, as `configured_takeover`.
+async fn configured_takeover_of(app: Faithful, policy: TakeoverPolicy, said: Option<HoldAnswer>) -> Verdict {
+    let (ours, theirs) = tokio::io::duplex(1 << 20);
+    let endpoint = Endpoint::new(app, Grant { classes: vec![] });
+    tokio::spawn(serve_connection(theirs, Arc::new(endpoint.with_takeover(policy))));
+    let client = UiClient::open(ours).await.expect("a session");
+    let report = run(&client, &Options { takeover: said, ..Options::default() }).await.expect("a report");
+    let case = report.cases.into_iter().find(|case| case.claim == CONFIGURED_TAKEOVER);
+    case.expect("the claim was recorded").verdict
+}
+
+#[tokio::test]
+async fn a_takeover_answered_as_the_runner_says_the_host_is_configured_holds() {
+    let refuses = TakeoverPolicy::default().otherwise(HoldAnswer::Refuse);
+    assert_eq!(configured_takeover(refuses, Some(HoldAnswer::Refuse)).await, Verdict::Holds);
+    let allows = TakeoverPolicy::default().otherwise(HoldAnswer::Allow);
+    assert_eq!(configured_takeover(allows, Some(HoldAnswer::Allow)).await, Verdict::Holds);
+    let refuses = TakeoverPolicy::default().otherwise(HoldAnswer::Refuse);
+    let verdict = configured_takeover(refuses, Some(HoldAnswer::Allow)).await;
+    assert!(matches!(verdict, Verdict::Broken(_)), "a host that refuses was held to allow: {verdict:?}");
+    let verdict = configured_takeover(TakeoverPolicy::default(), None).await;
+    assert!(matches!(verdict, Verdict::Unreachable(_)), "no configuration named: {verdict:?}");
 }
 
 fn broken_claims(report: &Report) -> Vec<&str> {
@@ -538,6 +633,39 @@ async fn actions_and_input_the_app_declines_under_a_fixture_are_unreachable_with
     }
 }
 
+/// The claims that need a live sequence to run, which a decline takes away.
+const RUNNING_INPUT_CLAIMS: [&str; 3] = [
+    "a pointer move to a layout node runs and names the frame after it",
+    "a click at the watchable pace answers no sooner than its floor",
+    SOURCE_KINDS_CLAIM,
+];
+
+#[tokio::test]
+async fn live_input_the_app_declines_is_unreachable_with_its_reason_and_its_refusals_still_hold() {
+    let report = report_of_app(Faithful::new(Flaw::None).declining_input()).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    for claim in RUNNING_INPUT_CLAIMS.into_iter().chain(["input reaches the app while a fixture stands"]) {
+        assert!(unreachable_because(&report, claim, PERSON), "{claim}: {report:?}");
+    }
+    for claim in [
+        "an unknown key",
+        "a frame the app no longer holds",
+        "a takeover the offer does not say the app holds is refused before any of the sequence runs",
+        "input while a past position is shown is refused as showing_past",
+    ] {
+        assert_eq!(verdict_of(&report, claim), Some(&Verdict::Holds), "{claim}: {report:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_configured_takeover_the_app_declines_first_is_unreachable_with_its_reason() {
+    for said in [HoldAnswer::Refuse, HoldAnswer::Allow] {
+        let app = Faithful::under(Condition::HoldsTakeover).declining_input();
+        let verdict = configured_takeover_of(app, TakeoverPolicy::default().otherwise(said), Some(said)).await;
+        assert!(matches!(&verdict, Verdict::Unreachable(why) if why.contains(PERSON)), "{verdict:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_fixture_the_app_ends_itself_is_told_with_its_reason_and_breaks_nothing() {
     let report = report_of_app(Faithful::under(Condition::EndsFixture)).await;
@@ -547,6 +675,43 @@ async fn a_fixture_the_app_ends_itself_is_told_with_its_reason_and_breaks_nothin
         assert_eq!(verdict_of(&report, claim), Some(&Verdict::Holds), "{claim}: {report:?}");
     }
     assert!(unreachable_because(&report, "replacing and releasing a fixture", ARRIVED), "{report:?}");
+}
+
+const MARK_REQUIRED: &str = "a present asking mark: false of an instance that is not a dev instance is refused as mark_required";
+const MARK_DRAWN: &str =
+    "while a fixture stands, a capture with the host's drawing shows the fixture mark, and the frame alone does not";
+const MARK_LEFT_OFF: &str =
+    "a dev instance honours a present asking mark: false: the fixture stands, and no capture shows the fixture mark";
+
+#[tokio::test]
+async fn a_faithful_app_marks_its_fixture_in_its_host_s_drawing_alone_and_refuses_mark_false() {
+    let report = report_of(Flaw::None).await;
+    assert_eq!(verdict_of(&report, MARK_REQUIRED), Some(&Verdict::Holds), "{report:?}");
+    assert_eq!(verdict_of(&report, MARK_DRAWN), Some(&Verdict::Holds), "{report:?}");
+    assert!(unreachable_because(&report, MARK_LEFT_OFF, "no dev instance"), "{report:?}");
+}
+
+#[tokio::test]
+async fn a_dev_instance_honours_mark_false_and_still_marks_a_fixture_that_asks_nothing() {
+    let report = report_of_app(Faithful::under(Condition::DevInstance)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    assert_eq!(verdict_of(&report, MARK_LEFT_OFF), Some(&Verdict::Holds), "{report:?}");
+    assert_eq!(verdict_of(&report, MARK_DRAWN), Some(&Verdict::Holds), "{report:?}");
+    assert!(unreachable_because(&report, MARK_REQUIRED, "dev instance"), "{report:?}");
+}
+
+#[tokio::test]
+async fn a_mark_in_the_frame_alone_or_no_mark_at_all_is_broken() {
+    for flaw in [Flaw::MarkInFrame, Flaw::Unmarked] {
+        let report = report_of(flaw).await;
+        assert_eq!(broken_claims(&report), vec![MARK_DRAWN], "{report:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_dev_instance_that_marks_a_fixture_asked_to_go_unmarked_is_broken() {
+    let report = report_of_app(Faithful { condition: Condition::DevInstance, ..Faithful::new(Flaw::MarksRegardless) }).await;
+    assert_eq!(broken_claims(&report), vec![MARK_LEFT_OFF], "{report:?}");
 }
 
 #[tokio::test]

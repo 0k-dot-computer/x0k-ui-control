@@ -69,6 +69,7 @@
       const was = fixture();
       standing = next;
       if (fixture() === was) return;
+      hold2.drawn.standing(fixture());
       for (const listener of [...listeners]) {
         try {
           listener(fixture());
@@ -180,8 +181,447 @@
     };
   }
 
+  // substrate/apps/ui-control-page/src/clock.ts
+  var PENDING_MS = 2e3;
+  var STEP_LAPSE_MS = 1e4;
+  var UNSTEPPED = [
+    "media playback",
+    "frames from other origins",
+    "the clocks of same-origin frames",
+    "canvas drawn from a worker",
+    "timers in workers",
+    "the caret's blink",
+    "native smooth scrolling",
+    "document.timeline.currentTime read by script",
+    "event timestamps",
+    "an idle callback's deadline"
+  ];
+  var MICROTASK_TURNS = 16;
+  var MAX_TIMERS_PER_STEP = 1e4;
+  var IDLE_PERIOD_MS = 50;
+  function installClock(win) {
+    const w = win;
+    const nativeSetTimeout = win.setTimeout.bind(win);
+    const nativeSetInterval = win.setInterval.bind(win);
+    const nativeClearTimeout = win.clearTimeout.bind(win);
+    const perf = win.performance;
+    const nativeNow = perf.now.bind(perf);
+    const NativeDate = win.Date;
+    const nativeDateNow = NativeDate.now.bind(NativeDate);
+    const native = { setTimeout: (cb, ms) => nativeSetTimeout(cb, ms), clearTimeout: (id) => nativeClearTimeout(id), now: nativeNow };
+    let frames;
+    let run = null;
+    let floorNow = -Infinity, floorDate = -Infinity;
+    const report = (e) => {
+      nativeSetTimeout(() => {
+        throw e;
+      });
+    };
+    const turns = async () => {
+      for (let i = 0; i < MICROTASK_TURNS; i++) await void 0;
+    };
+    const nowAt = () => run ? run.perf0 + run.t : Math.max(nativeNow(), floorNow);
+    const dateAt = () => run ? Math.floor(run.date0 + run.t) : Math.max(nativeDateNow(), floorDate);
+    Object.defineProperty(perf, "now", { value: function now() {
+      return nowAt();
+    }, configurable: true, writable: true });
+    function SteppedDate(...args) {
+      if (!new.target) return new NativeDate(dateAt()).toString();
+      return Reflect.construct(NativeDate, args.length === 0 ? [dateAt()] : args, new.target);
+    }
+    SteppedDate.prototype = NativeDate.prototype;
+    Object.setPrototypeOf(SteppedDate, NativeDate);
+    Object.defineProperty(SteppedDate, "name", { value: "Date" });
+    SteppedDate.now = () => dateAt();
+    Object.defineProperty(win, "Date", { value: SteppedDate, configurable: true, writable: true });
+    const timers = /* @__PURE__ */ new Map();
+    let seq = 0, lastVirtual = 1 << 30;
+    let running;
+    const armNative = (timer, delay) => {
+      timer.due = nativeNow() + delay;
+      if (timer.every === void 0) return nativeSetTimeout(() => {
+        timers.delete(timer.id);
+        timer.handler.apply(win, timer.args);
+      }, delay);
+      if (delay === timer.every) return nativeSetInterval(() => {
+        timer.due = nativeNow() + timer.every;
+        timer.handler.apply(win, timer.args);
+      }, timer.every);
+      return nativeSetTimeout(() => {
+        timer.native = armNative(timer, timer.every);
+        timer.handler.apply(win, timer.args);
+      }, delay);
+    };
+    const nested = (nesting, delay) => nesting > 4 ? Math.max(delay, 4) : delay;
+    const add = (handler, ms, args, every) => {
+      if (typeof handler !== "function") return (every ? nativeSetInterval : nativeSetTimeout)(handler, ms, ...args);
+      const delay = Math.max(0, Number(ms) || 0);
+      const timer = { id: 0, handler, args, due: 0, every: every ? delay : void 0, nesting: running ? running.nesting + 1 : 0, seq: ++seq };
+      if (run) {
+        timer.id = ++lastVirtual;
+        timer.due = run.t + nested(timer.nesting, delay);
+      } else {
+        timer.id = timer.native = armNative(timer, delay);
+      }
+      timers.set(timer.id, timer);
+      return timer.id;
+    };
+    win.setTimeout = ((handler, ms, ...args) => add(handler, ms, args, false));
+    win.setInterval = ((handler, ms, ...args) => add(handler, ms, args, true));
+    win.clearTimeout = win.clearInterval = ((id) => {
+      const timer = id === void 0 ? void 0 : timers.get(id);
+      if (!timer) return nativeClearTimeout(id);
+      timers.delete(timer.id);
+      if (timer.native !== void 0) nativeClearTimeout(timer.native);
+    });
+    const nativeIdle = w.requestIdleCallback?.bind(win), nativeCancelIdle = w.cancelIdleCallback?.bind(win);
+    if (nativeIdle) {
+      w.requestIdleCallback = (cb, options) => {
+        if (!run) return nativeIdle(cb, options);
+        return add(() => {
+          const started = nativeNow();
+          cb({ didTimeout: false, timeRemaining: () => Math.max(0, IDLE_PERIOD_MS - (nativeNow() - started)) });
+        }, 0, [], false);
+      };
+      w.cancelIdleCallback = (id) => timers.has(id) ? win.clearTimeout(id) : nativeCancelIdle(id);
+    }
+    const nextDue = (target) => {
+      let first;
+      for (const timer of timers.values()) {
+        if (timer.native !== void 0 || timer.due > target) continue;
+        if (!first || timer.due < first.due || timer.due === first.due && timer.seq < first.seq) first = timer;
+      }
+      return first;
+    };
+    const fire = (timer, at) => {
+      if (timer.every === void 0) timers.delete(timer.id);
+      else {
+        timer.nesting += 1;
+        timer.due = at + nested(timer.nesting, timer.every);
+        timer.seq = ++seq;
+      }
+      try {
+        timer.handler.apply(win, timer.args);
+      } catch (e) {
+        report(e);
+      }
+    };
+    const pending = /* @__PURE__ */ new Map();
+    const gaveUp = /* @__PURE__ */ new Set();
+    const counted = (what, work) => {
+      if (!run) return;
+      pending.set(work, what);
+      const done = () => {
+        pending.delete(work);
+        gaveUp.delete(work);
+      };
+      work.then(done, done);
+    };
+    const nativeFetch = win.fetch?.bind(win);
+    if (nativeFetch) {
+      win.fetch = ((input, init) => {
+        const answer = nativeFetch(input, init);
+        counted(`fetch ${input instanceof win.Request ? input.url : String(input)}`, answer);
+        return answer;
+      });
+    }
+    for (const method of ["arrayBuffer", "blob", "formData", "json", "text"]) {
+      const read = win.Response?.prototype[method];
+      if (!read) continue;
+      win.Response.prototype[method] = function() {
+        const body = read.call(this);
+        counted(`the body of ${this.url}`, body);
+        return body;
+      };
+    }
+    const send = win.XMLHttpRequest?.prototype.send;
+    if (send) {
+      win.XMLHttpRequest.prototype.send = function(body) {
+        if (run) counted("an XMLHttpRequest", new Promise((done) => this.addEventListener("loadend", done, { once: true })));
+        return send.call(this, body);
+      };
+    }
+    const HOST_CHANNEL = "plugin:x0k-ui-tauri|";
+    const COUNTING = Symbol.for("x0k.ui-control.clock.ipc");
+    const countIpc = () => {
+      const internals = w.__TAURI_INTERNALS__;
+      const invoke = internals?.invoke;
+      if (typeof invoke !== "function" || invoke[COUNTING]) return;
+      const counting = (cmd, ...rest) => {
+        const answer = invoke.call(internals, cmd, ...rest);
+        if (!(typeof cmd === "string" && cmd.startsWith(HOST_CHANNEL))) counted(`ipc ${String(cmd)}`, Promise.resolve(answer));
+        return answer;
+      };
+      counting[COUNTING] = true;
+      try {
+        internals.invoke = counting;
+      } catch {
+      }
+    };
+    const quiet = async (until, over) => {
+      for (; ; ) {
+        const waiting = [...pending.keys()].filter((work) => !gaveUp.has(work));
+        if (waiting.length === 0 || !run) return;
+        const left = until - nativeNow();
+        const timedOut = left <= 0 || await new Promise((done) => {
+          const timer = nativeSetTimeout(() => done(true), left);
+          Promise.allSettled(waiting).then(() => {
+            nativeClearTimeout(timer);
+            done(false);
+          });
+        });
+        if (timedOut) {
+          for (const work of waiting) {
+            const what = pending.get(work);
+            if (what === void 0) continue;
+            gaveUp.add(work);
+            over.push(what);
+            run.why.add(`pending work reached its bound: ${what}`);
+          }
+          return;
+        }
+        await turns();
+      }
+    };
+    const kept2 = /* @__PURE__ */ new Map();
+    let fresh = [];
+    const keep = (animation, at) => {
+      animation.pause();
+      kept2.set(animation, at);
+      fresh.push(animation.ready.catch(() => void 0));
+    };
+    const onDocument = (animation) => animation.timeline === win.document.timeline;
+    const isCss = (animation) => w.CSSAnimation && animation instanceof w.CSSAnimation || w.CSSTransition && animation instanceof w.CSSTransition;
+    const catchAnimations = () => {
+      if (!run) return;
+      for (const animation of win.document.getAnimations()) {
+        if (!onDocument(animation) || animation.playState !== "running") continue;
+        const offset = kept2.has(animation) || !isCss(animation) ? Number(animation.currentTime ?? 0) : 0;
+        keep(animation, { offset, base: run.t, rate: animation.playbackRate });
+      }
+    };
+    const created = (animation) => {
+      if (run && onDocument(animation)) keep(animation, { offset: Number(animation.currentTime ?? 0), base: run.t, rate: animation.playbackRate });
+    };
+    for (const type of ["transitionrun", "animationstart"]) win.addEventListener(type, catchAnimations, { capture: true, passive: true });
+    const mutations = new win.MutationObserver(() => catchAnimations());
+    const keepRunning = (r) => {
+      let running2 = 0;
+      for (const animation of win.document.getAnimations()) {
+        if (!onDocument(animation) || animation.playState !== "running") continue;
+        const rate = animation.playbackRate;
+        const offset = animation.startTime === null ? Number(animation.currentTime ?? 0) : (r.timeline0 - Number(animation.startTime)) * rate;
+        keep(animation, { offset, base: 0, rate });
+        running2 += 1;
+      }
+      if (running2 > 0) r.why.add(`${running2} animations ran when the clock began, where the wall had put them`);
+    };
+    const seekAnimations = (t) => {
+      for (const [animation, at] of kept2) {
+        if (animation.playState === "idle") kept2.delete(animation);
+        else if (animation.playState === "paused") animation.currentTime = at.offset + (t - at.base) * at.rate;
+      }
+    };
+    const giveAnimations = (r) => {
+      for (const [animation, at] of kept2) {
+        if (animation.playState !== "paused") continue;
+        if (at.rate === 0) animation.play();
+        else animation.startTime = r.timeline0 + at.base - at.offset / at.rate;
+      }
+      kept2.clear();
+      fresh = [];
+    };
+    const svgs = /* @__PURE__ */ new Map();
+    const catchSvg = (svg, atBegin) => {
+      if (!run || svg.ownerSVGElement || svgs.has(svg) || typeof svg.pauseAnimations !== "function" || svg.animationsPaused()) return;
+      svg.pauseAnimations();
+      if (!atBegin) svg.setCurrentTime(0);
+      svgs.set(svg, { from: atBegin ? svg.getCurrentTime() : 0, at: run.t });
+    };
+    const catchSvgs = (atBegin = false) => {
+      for (const svg of win.document.querySelectorAll("svg")) catchSvg(svg, atBegin);
+    };
+    const svgAnimation = w.SVGAnimationElement?.prototype;
+    for (const name of ["beginElement", "beginElementAt"]) {
+      const begin = svgAnimation?.[name];
+      if (!begin) continue;
+      svgAnimation[name] = function(...args) {
+        let outer = this.ownerSVGElement;
+        while (outer?.ownerSVGElement) outer = outer.ownerSVGElement;
+        if (outer) catchSvg(outer, false);
+        return begin.apply(this, args);
+      };
+    }
+    const seekSvgs = (t) => {
+      for (const [svg, { from, at }] of svgs) {
+        if (svg.isConnected) svg.setCurrentTime(from + (t - at) / 1e3);
+        else svgs.delete(svg);
+      }
+    };
+    const giveSvgs = (r) => {
+      for (const [svg, { from, at }] of svgs) {
+        svg.setCurrentTime(from + (nativeNow() - r.perf0 - at) / 1e3);
+        svg.unpauseAnimations();
+      }
+      svgs.clear();
+    };
+    let workerCanvases = 0;
+    const transfer = w.HTMLCanvasElement?.prototype.transferControlToOffscreen;
+    if (transfer) {
+      w.HTMLCanvasElement.prototype.transferControlToOffscreen = function() {
+        workerCanvases += 1;
+        return transfer.call(this);
+      };
+    }
+    const unsteppedNow = () => {
+      const doc = win.document;
+      const found = [];
+      const playing = [...doc.querySelectorAll("video, audio")].filter((media) => !media.paused).length;
+      if (playing) found.push(`media playback: ${playing} playing`);
+      let other = 0, same2 = 0;
+      for (const frame of doc.querySelectorAll("iframe, frame")) {
+        let inner = null;
+        try {
+          inner = frame.contentDocument;
+        } catch {
+          inner = null;
+        }
+        if (inner) same2 += 1;
+        else other += 1;
+      }
+      if (other) found.push(`frames from other origins: ${other}`);
+      if (same2) found.push(`the clocks of same-origin frames: ${same2}`);
+      if (workerCanvases) found.push(`canvas drawn from a worker: ${workerCanvases} handed over`);
+      return found;
+    };
+    let busy = false;
+    let lapse;
+    let lapsed;
+    const relapse = () => {
+      nativeClearTimeout(lapse);
+      lapse = nativeSetTimeout(() => {
+        if (!run || busy) return;
+        stepped.end();
+        lapsed = `the stepped clock ended itself after ${STEP_LAPSE_MS} ms with no step`;
+      }, STEP_LAPSE_MS);
+    };
+    const caught = () => {
+      catchAnimations();
+      catchSvgs();
+    };
+    const stepped = {
+      begin(options = {}) {
+        if (!frames) throw new Error("the stepped clock has no hold");
+        if (run) throw new Error("the stepped clock already steps");
+        if (frames.held()) throw new Error("the page is held: verify the hold before the clock begins");
+        const perf0 = nativeNow();
+        const r = {
+          t: 0,
+          perf0,
+          date0: options.date ?? nativeDateNow(),
+          dateNamed: options.date !== void 0,
+          timeline0: Number(win.document.timeline.currentTime ?? perf0),
+          pendingMs: options.pendingMs ?? PENDING_MS,
+          why: /* @__PURE__ */ new Set()
+        };
+        run = r;
+        lapsed = void 0;
+        for (const timer of timers.values()) {
+          if (timer.native === void 0) continue;
+          nativeClearTimeout(timer.native);
+          timer.native = void 0;
+          timer.due -= perf0;
+          timer.nesting = 0;
+        }
+        frames.take();
+        keepRunning(r);
+        catchSvgs(true);
+        mutations.observe(win.document, { subtree: true, childList: true, attributes: true, characterData: true });
+        countIpc();
+        relapse();
+        return { unstepped: unsteppedNow() };
+      },
+      async advanceTo(ms) {
+        const r = run;
+        if (!r || !frames) throw new Error(lapsed ?? "the stepped clock does not step: begin it first");
+        if (busy) throw new Error("a step is already running");
+        if (!Number.isFinite(ms) || ms < r.t) throw new Error(`a step goes forward: the clock is at ${r.t} ms, and the step asked for ${ms} ms`);
+        busy = true;
+        nativeClearTimeout(lapse);
+        try {
+          const until = nativeNow() + r.pendingMs;
+          const over = [];
+          let fired = 0;
+          await quiet(until, over);
+          for (let timer = nextDue(ms); timer && run === r; timer = nextDue(ms)) {
+            if (fired === MAX_TIMERS_PER_STEP) {
+              r.why.add(`timers ran away: ${MAX_TIMERS_PER_STEP} fired in one step`);
+              break;
+            }
+            r.t = Math.max(r.t, timer.due);
+            running = timer;
+            fire(timer, r.t);
+            fired += 1;
+            caught();
+            await turns();
+            running = void 0;
+            caught();
+            await quiet(until, over);
+          }
+          r.t = ms;
+          const ran = frames.run(r.perf0 + ms);
+          caught();
+          await turns();
+          caught();
+          await quiet(until, over);
+          seekAnimations(ms);
+          seekSvgs(ms);
+          const ready = fresh;
+          fresh = [];
+          const unpainted = await frames.settle(ready);
+          const found = unsteppedNow();
+          for (const source of found) r.why.add(`an unstepped source: ${source}`);
+          const step = { time: ms, epoch: frames.epoch(), timers: fired, frames: ran, animations: kept2.size, unstepped: found };
+          if (over.length) step.overBound = over;
+          if (unpainted) step.unpainted = unpainted;
+          return step;
+        } finally {
+          running = void 0;
+          busy = false;
+          if (run === r) relapse();
+        }
+      },
+      end() {
+        const r = run;
+        if (!r) return { time: 0, sameOnRerun: false, why: [lapsed ?? "the stepped clock did not step"] };
+        run = null;
+        mutations.disconnect();
+        nativeClearTimeout(lapse);
+        floorNow = r.perf0 + r.t;
+        floorDate = r.dateNamed ? -Infinity : r.date0 + r.t;
+        giveAnimations(r);
+        giveSvgs(r);
+        for (const timer of timers.values()) {
+          if (timer.native === void 0) timer.native = armNative(timer, Math.max(0, r.perf0 + timer.due - nativeNow()));
+        }
+        frames?.give();
+        pending.clear();
+        gaveUp.clear();
+        return { time: r.t, sameOnRerun: r.why.size === 0, why: [...r.why] };
+      },
+      time: () => run?.t ?? null,
+      unstepped: () => [...UNSTEPPED]
+    };
+    return { native, stepped, stepping: () => run !== null, created, bind: (given) => {
+      frames = given;
+    } };
+  }
+
   // substrate/apps/ui-control-page/src/drawn-layer.ts
   var PALETTE = ["#7c3aed", "#0891b2", "#d97706", "#db2777"];
+  var FIXTURE_INK = "#f59e0b";
+  var FIXTURE_BAND = 6;
+  var FIXTURE_NOTICE = "A fixture, not the live state";
   var LOOK = `
   .drawn { position: fixed; inset: 0; pointer-events: none; }
   .ring { position: absolute; border: 3px solid var(--ink); border-radius: 50%; box-sizing: border-box; }
@@ -193,6 +633,18 @@
   .dot.pressed { background: white; border: 3px solid var(--ink); }
   .label { position: absolute; font-weight: 500; font-family: system-ui, sans-serif; color: white; background: var(--ink);
            padding: 1px 4px; border-radius: 4px; white-space: pre; }
+  .band { position: absolute; inset: 0; border: 4px solid var(--ink); box-sizing: border-box; }
+  .notice { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); }
+  .dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.25); }
+  .card { position: absolute; box-sizing: border-box; padding: 12px 16px; background: white; color: #111;
+          border: 2px solid var(--ink); border-radius: 8px; font-family: system-ui, sans-serif; }
+  .card p { margin: 0 0 4px; }
+  .button { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+            border-radius: 6px; font-weight: 500; font-family: system-ui, sans-serif; white-space: pre; }
+  .allow { background: var(--ink); color: white; }
+  .refuse { background: white; color: #111; border: 1.5px solid #111; }
+  .fixture { position: absolute; inset: 0; border-style: solid; border-color: var(--ink); box-sizing: border-box; }
+  .fixture-notice { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); }
 `;
   var LABEL_ROOM = 160;
   var ARROW = "0,0 0,17 4.5,13 8,20 11,19 7.5,12 13,12";
@@ -264,13 +716,65 @@
       const right = x > win.innerWidth - LABEL_ROOM;
       Object.assign(label.style, right ? { right: `${win.innerWidth - x + 4}px` } : { left: `${x + 16}px` }, { top: `${y + down}px` });
     };
-    return {
+    const boxed = (kind, [left, top, width, height], k, text) => {
+      const el = doc.createElement("div");
+      el.className = kind;
+      Object.assign(el.style, { left: `${left * k}px`, top: `${top * k}px`, width: `${width * k}px`, height: `${height * k}px` });
+      if (text) el.textContent = text;
+      return el;
+    };
+    const takeover = (held, k, size) => {
+      const name = named(held.requester, held.name);
+      if (!held.asked) {
+        const band = doc.createElement("div");
+        band.className = "band";
+        const notice = doc.createElement("div");
+        notice.className = "label notice";
+        notice.textContent = `${name} has taken over \xB7 Esc to end`;
+        notice.style.fontSize = `${size}px`;
+        for (const el of [band, notice]) ink(el, held.hue);
+        return [band, notice];
+      }
+      if (!held.card || !held.allow || !held.refuse) return [];
+      const dim = doc.createElement("div");
+      dim.className = "dim";
+      const card = boxed("card", held.card, k);
+      card.style.fontSize = `${size}px`;
+      for (const line of [`${name} asks to take over this window's input`, "Your clicks and keys wait until its sequence ends."]) {
+        const p = doc.createElement("p");
+        p.textContent = line;
+        card.append(p);
+      }
+      const allow = boxed("button allow", held.allow, k, "Allow");
+      const refuse = boxed("button refuse", held.refuse, k, "Refuse (Esc)");
+      for (const el of [card, allow, refuse]) {
+        ink(el, held.hue);
+        el.style.fontSize = `${size}px`;
+      }
+      return [dim, card, allow, refuse];
+    };
+    const fixtureMark = (band, size) => {
+      const edge = doc.createElement("div");
+      edge.className = "fixture";
+      edge.style.borderWidth = `${band}px`;
+      const notice = doc.createElement("div");
+      notice.className = "label fixture-notice";
+      notice.textContent = FIXTURE_NOTICE;
+      notice.style.fontSize = `${size}px`;
+      for (const el of [edge, notice]) el.style.setProperty("--ink", FIXTURE_INK);
+      return [edge, notice];
+    };
+    let stands = null;
+    let last = null;
+    const layer = {
       paint(drawing) {
+        last = drawing;
         if (!attach()) return;
         raise();
         const k = win.innerWidth / (drawing.units || win.innerWidth);
         const [ringAt, captions, size] = [declared.ring ?? 8, declared.captions ?? true, declared.label_size ?? 12];
         const parts = [];
+        if (drawing.fixture && drawing.fixture === stands) parts.push(...fixtureMark(FIXTURE_BAND * k, size));
         for (const click of drawing.clicks) {
           const ring = doc.createElement("div");
           const across = (2 * ringAt + 28 * click.gone) * k;
@@ -318,6 +822,7 @@
             parts.push(keys);
           }
         }
+        if (drawing.takeover) parts.push(...takeover(drawing.takeover, k, size));
         drawn.replaceChildren(...parts);
       },
       hide(hidden) {
@@ -325,8 +830,14 @@
       },
       look(look2) {
         declared = look2;
+      },
+      standing(handle) {
+        if (stands === handle) return;
+        stands = handle;
+        if (last?.fixture) layer.paint(last);
       }
     };
+    return layer;
   }
 
   // substrate/apps/ui-control-page/src/hold.ts
@@ -341,6 +852,8 @@
     const existing = win[INSTALLED];
     if (existing) return existing;
     const doc = win.document;
+    const clock = installClock(win);
+    const native = clock.native;
     const nativeRaf = win.requestAnimationFrame.bind(win);
     const nativeCancel = win.cancelAnimationFrame.bind(win);
     let epoch = 0;
@@ -394,6 +907,7 @@
     win.Element.prototype.animate = function(...args) {
       const animation = animate.apply(this, args);
       bump();
+      clock.created(animation);
       animation.addEventListener("finish", bump);
       animation.addEventListener("cancel", bump);
       return animation;
@@ -401,24 +915,27 @@
     let held = false;
     let lastId = 0;
     const waiting = /* @__PURE__ */ new Map();
+    const stepped = /* @__PURE__ */ new Map();
     const scheduled = /* @__PURE__ */ new Map();
     const schedule = (id, cb) => {
-      scheduled.set(id, nativeRaf((t) => {
+      scheduled.set(id, { native: nativeRaf((t) => {
         scheduled.delete(id);
         cb(t);
-      }));
+      }), cb });
     };
     win.requestAnimationFrame = (cb) => {
       const id = ++lastId;
-      if (held) waiting.set(id, cb);
+      if (clock.stepping()) stepped.set(id, cb);
+      else if (held) waiting.set(id, cb);
       else schedule(id, cb);
       return id;
     };
     win.cancelAnimationFrame = (id) => {
       waiting.delete(id);
-      const native = scheduled.get(id);
-      if (native !== void 0) {
-        nativeCancel(native);
+      stepped.delete(id);
+      const pending = scheduled.get(id);
+      if (pending !== void 0) {
+        nativeCancel(pending.native);
         scheduled.delete(id);
       }
     };
@@ -430,12 +947,12 @@
     const hiddenNow = () => doc.visibilityState === "hidden" ? HIDDEN : void 0;
     let stalledAt;
     const stalled = () => {
-      stalledAt ??= win.performance.now() - FRAME_WAIT_MS;
+      stalledAt ??= native.now() - FRAME_WAIT_MS;
       nativeRaf(() => {
         stalledAt = void 0;
       });
     };
-    const unpainted = () => hiddenNow() ?? (stalledAt === void 0 ? void 0 : `no rendering update has come for ${Math.round(win.performance.now() - stalledAt)} ms`);
+    const unpainted = () => hiddenNow() ?? (stalledAt === void 0 ? void 0 : `no rendering update has come for ${Math.round(native.now() - stalledAt)} ms`);
     const whilePainting = (wait) => new Promise((done) => {
       const now = unpainted();
       if (now) return done(now);
@@ -443,7 +960,7 @@
       const finish = (why) => {
         if (finished) return;
         finished = true;
-        clearTimeout(timer);
+        native.clearTimeout(timer);
         doc.removeEventListener("visibilitychange", onVisibility);
         done(why);
       };
@@ -452,13 +969,13 @@
         if (why) finish(why);
       };
       doc.addEventListener("visibilitychange", onVisibility);
-      const timer = setTimeout(() => {
+      const timer = native.setTimeout(() => {
         stalled();
         finish(unpainted());
       }, FRAME_WAIT_MS);
       wait.then(() => finish(), () => finish());
     });
-    const rendered = () => whilePainting(new Promise((done) => win.requestAnimationFrame(() => done())));
+    const rendered = () => clock.stepping() ? Promise.resolve(unpainted()) : whilePainting(new Promise((done) => win.requestAnimationFrame(() => done())));
     const SETTLE_EVENTS = ["pointermove", "pointerdown", "pointerup", "mousemove", "mousedown", "mouseup", "click", "keydown", "keyup", "input", "wheel"];
     const settled = async () => {
       let quiet = 0;
@@ -467,12 +984,12 @@
       };
       for (const kind of SETTLE_EVENTS) win.addEventListener(kind, heard, { capture: true, passive: true });
       try {
-        const until = win.performance.now() + SETTLE_MS;
+        const until = native.now() + SETTLE_MS;
         do {
           const why = await rendered();
           if (why) return why;
           quiet += 1;
-        } while (quiet <= 2 && win.performance.now() < until);
+        } while (quiet <= 2 && native.now() < until);
         return void 0;
       } finally {
         for (const kind of SETTLE_EVENTS) win.removeEventListener(kind, heard, { capture: true });
@@ -489,7 +1006,7 @@
         layer.hide(false);
         hidDrawn = false;
       }
-      clearTimeout(lapse);
+      native.clearTimeout(lapse);
       for (const { animation, startTime } of paused) {
         if (animation.playState !== "paused") continue;
         if (startTime === null) animation.play();
@@ -500,10 +1017,10 @@
       waiting.clear();
     };
     const hold2 = async (read, options = {}) => {
-      const start = win.performance.now();
+      const start = native.now();
       if (!held) {
         held = true;
-        lapse = setTimeout(() => {
+        lapse = native.setTimeout(() => {
           release();
           bump();
         }, HOLD_LAPSE_MS);
@@ -518,7 +1035,7 @@
       const why = unheld ?? await whilePainting(updates(SETTLE_UPDATES));
       unheld = void 0;
       const epoch2 = epochNow();
-      const answered = { epoch: epoch2, read: read(), holdMs: win.performance.now() - start };
+      const answered = { epoch: epoch2, read: read(), holdMs: native.now() - start };
       return why ? { ...answered, unpainted: why } : answered;
     };
     const verify = () => {
@@ -526,7 +1043,39 @@
       release();
       return epoch2;
     };
-    const api = { epoch: epochNow, changed: bump, hold: hold2, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
+    clock.bind({
+      take() {
+        for (const [id, { native: frame, cb }] of scheduled) {
+          nativeCancel(frame);
+          stepped.set(id, cb);
+        }
+        scheduled.clear();
+        for (const [id, cb] of waiting) stepped.set(id, cb);
+        waiting.clear();
+      },
+      run(timestamp) {
+        const due = [...stepped.values()];
+        stepped.clear();
+        for (const cb of due) {
+          try {
+            cb(timestamp);
+          } catch (e) {
+            native.setTimeout(() => {
+              throw e;
+            });
+          }
+        }
+        return due.length;
+      },
+      give() {
+        for (const [id, cb] of stepped) schedule(id, cb);
+        stepped.clear();
+      },
+      settle: (ready) => whilePainting(Promise.allSettled(ready).then(() => updates(SETTLE_UPDATES))),
+      epoch: epochNow,
+      held: () => held
+    });
+    const api = { epoch: epochNow, changed: bump, hold: hold2, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer, steppedClock: clock.stepped };
     win[INSTALLED] = api;
     return api;
   }

@@ -18,6 +18,25 @@ export interface Drawing {
   pointers: { requester: string; name?: string; at: [number, number]; pressed: boolean; hue?: number }[];
   clicks: { at: [number, number]; gone: number; hue?: number }[];
   keys?: { requester: string; text: string; gone: number; hue?: number };
+  takeover?: Takeover | null;
+  /** The state fixture the host marks over the page, by its handle. */
+  fixture?: string | null;
+}
+
+/** A rectangle in the host's units: its left, top, width and height. */
+export type Rect = [number, number, number, number];
+
+/** A takeover the host asks the person for, or holds: who for, the name
+ * its sequence gives, its colour index, and for an ask, where the host
+ * placed its card and its Allow and Refuse buttons. */
+export interface Takeover {
+  asked: boolean;
+  requester: string;
+  name?: string;
+  hue?: number;
+  card?: Rect;
+  allow?: Rect;
+  refuse?: Rect;
 }
 
 /** The layer a host draws drivers' input on. */
@@ -28,10 +47,19 @@ export interface DrawnLayer {
   hide(hidden: boolean): void;
   /** Draw in `look` from the next paint. */
   look(look: InputLook): void;
+  /** The state fixture that stands in the page now, or none: the layer
+   * draws a host's fixture mark only while the fixture it names stands. */
+  standing(handle: string | null): void;
 }
 
 /** The host's own colours, picked by each requester's colour index. */
 const PALETTE = ['#7c3aed', '#0891b2', '#d97706', '#db2777'];
+/** The fixture mark's ink, `x0k-ui-protocol`'s `FIXTURE_INK`, in every look. */
+export const FIXTURE_INK = '#f59e0b';
+/** The fixture mark's band, `FIXTURE_BAND`, in the host's units. */
+const FIXTURE_BAND = 6;
+/** What the fixture mark says, `FIXTURE_NOTICE`. */
+const FIXTURE_NOTICE = 'A fixture, not the live state';
 /** The layer's stylesheet: each mark's colour is its `--ink`. */
 const LOOK = `
   .drawn { position: fixed; inset: 0; pointer-events: none; }
@@ -44,6 +72,18 @@ const LOOK = `
   .dot.pressed { background: white; border: 3px solid var(--ink); }
   .label { position: absolute; font-weight: 500; font-family: system-ui, sans-serif; color: white; background: var(--ink);
            padding: 1px 4px; border-radius: 4px; white-space: pre; }
+  .band { position: absolute; inset: 0; border: 4px solid var(--ink); box-sizing: border-box; }
+  .notice { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); }
+  .dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.25); }
+  .card { position: absolute; box-sizing: border-box; padding: 12px 16px; background: white; color: #111;
+          border: 2px solid var(--ink); border-radius: 8px; font-family: system-ui, sans-serif; }
+  .card p { margin: 0 0 4px; }
+  .button { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+            border-radius: 6px; font-weight: 500; font-family: system-ui, sans-serif; white-space: pre; }
+  .allow { background: var(--ink); color: white; }
+  .refuse { background: white; color: #111; border: 1.5px solid #111; }
+  .fixture { position: absolute; inset: 0; border-style: solid; border-color: var(--ink); box-sizing: border-box; }
+  .fixture-notice { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); }
 `;
 /** How near the viewport's right edge, in CSS pixels, a pointer's labels go to its left. */
 const LABEL_ROOM = 160;
@@ -113,13 +153,73 @@ export function makeLayer(win: Window): DrawnLayer {
     const right = x > win.innerWidth - LABEL_ROOM;
     Object.assign(label.style, right ? { right: `${win.innerWidth - x + 4}px` } : { left: `${x + 16}px` }, { top: `${y + down}px` });
   };
-  return {
+  // An element of `kind` in the host's rectangle `rect`, at `k` CSS pixels a unit.
+  const boxed = (kind: string, [left, top, width, height]: Rect, k: number, text?: string) => {
+    const el = doc.createElement('div');
+    el.className = kind;
+    Object.assign(el.style, { left: `${left * k}px`, top: `${top * k}px`, width: `${width * k}px`, height: `${height * k}px` });
+    if (text) el.textContent = text;
+    return el;
+  };
+  // A takeover's marks: an ask's dimmed page, its card and its two buttons,
+  // or a hold's band around the page and its notice, naming the requester
+  // by the label's rule.
+  const takeover = (held: Takeover, k: number, size: number): Element[] => {
+    const name = named(held.requester, held.name);
+    if (!held.asked) {
+      const band = doc.createElement('div');
+      band.className = 'band';
+      const notice = doc.createElement('div');
+      notice.className = 'label notice';
+      notice.textContent = `${name} has taken over · Esc to end`;
+      notice.style.fontSize = `${size}px`;
+      for (const el of [band, notice]) ink(el, held.hue);
+      return [band, notice];
+    }
+    if (!held.card || !held.allow || !held.refuse) return [];
+    const dim = doc.createElement('div');
+    dim.className = 'dim';
+    const card = boxed('card', held.card, k);
+    card.style.fontSize = `${size}px`;
+    for (const line of [`${name} asks to take over this window's input`, 'Your clicks and keys wait until its sequence ends.']) {
+      const p = doc.createElement('p');
+      p.textContent = line;
+      card.append(p);
+    }
+    const allow = boxed('button allow', held.allow, k, 'Allow');
+    const refuse = boxed('button refuse', held.refuse, k, 'Refuse (Esc)');
+    for (const el of [card, allow, refuse]) {
+      ink(el, held.hue);
+      (el as HTMLElement).style.fontSize = `${size}px`;
+    }
+    return [dim, card, allow, refuse];
+  };
+  // The fixture mark: a band in the fixture's ink around the page, `band`
+  // CSS pixels wide, and its notice at the page's foot.
+  const fixtureMark = (band: number, size: number): Element[] => {
+    const edge = doc.createElement('div');
+    edge.className = 'fixture';
+    edge.style.borderWidth = `${band}px`;
+    const notice = doc.createElement('div');
+    notice.className = 'label fixture-notice';
+    notice.textContent = FIXTURE_NOTICE;
+    notice.style.fontSize = `${size}px`;
+    for (const el of [edge, notice]) (el as HTMLElement).style.setProperty('--ink', FIXTURE_INK);
+    return [edge, notice];
+  };
+  // The fixture standing in the page, as the library last said, and the
+  // host's last drawing, kept to draw again when the fixture changes.
+  let stands: string | null = null;
+  let last: Drawing | null = null;
+  const layer: DrawnLayer = {
     paint(drawing) {
+      last = drawing;
       if (!attach()) return;
       raise();
       const k = win.innerWidth / (drawing.units || win.innerWidth);
       const [ringAt, captions, size] = [declared.ring ?? 8, declared.captions ?? true, declared.label_size ?? 12];
       const parts: Element[] = [];
+      if (drawing.fixture && drawing.fixture === stands) parts.push(...fixtureMark(FIXTURE_BAND * k, size));
       for (const click of drawing.clicks) {
         const ring = doc.createElement('div');
         const across = (2 * ringAt + 28 * click.gone) * k;
@@ -162,6 +262,7 @@ export function makeLayer(win: Window): DrawnLayer {
           parts.push(keys);
         }
       }
+      if (drawing.takeover) parts.push(...takeover(drawing.takeover, k, size));
       drawn.replaceChildren(...parts);
     },
     hide(hidden) {
@@ -170,5 +271,11 @@ export function makeLayer(win: Window): DrawnLayer {
     look(look) {
       declared = look;
     },
+    standing(handle) {
+      if (stands === handle) return;
+      stands = handle;
+      if (last?.fixture) layer.paint(last);
+    },
   };
+  return layer;
 }

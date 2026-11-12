@@ -88,6 +88,7 @@ fn root() -> LayoutNode {
         enabled: true,
         focused: false,
         interactive: false,
+        opacity: None,
         action: None,
         source: None,
         composition: None,
@@ -115,6 +116,8 @@ impl UiApp for Browserish {
             replay_policy: Vec::new(),
             sandboxes: Vec::new(),
             input: None,
+            dev_instance: false,
+            screencast: None,
         }
     }
 

@@ -16,15 +16,20 @@ use x0k_ui_protocol::history::{
     check_history, check_history_offer, Destination, History, HistoryAnswer, HistoryCall, NavigateAnswer,
     NavigateCall, Shown,
 };
-use x0k_ui_protocol::input::{HeldFrame, Pace, Perform, Source, Step, Target, SOURCE_KINDS, WATCHABLE_PRESS_MS};
+use x0k_ui_protocol::input::{
+    HeldFrame, Pace, Perform, Source, Step, Target, SOURCE_KINDS, TAKEOVER_ASK_MS, WATCHABLE_PRESS_MS,
+};
 use x0k_ui_protocol::observe::{check_observation, LayoutNode, Observation, ObserveCall, Part, Region, StatePart};
 use x0k_ui_protocol::offer::{Offer, SideEffect, UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE};
+use x0k_ui_protocol::presentation::{FIXTURE_BAND, FIXTURE_INK};
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose, ReplayDisposition};
+use x0k_ui_protocol::screencast::{check_screencast_offer, CastCall, Clock, FramePart, FramesCall};
 use x0k_ui_protocol::shapes::interface_fingerprint;
 use x0k_ui_protocol::{Refused, RefusalCode, INPUT_VECTORS};
 
 use crate::client::{ClientFault, UiClient};
-use crate::{InvokeAnswer, PerformAnswer};
+use crate::takeover::HoldAnswer;
+use crate::{CastAnswer, FramesAnswer, InvokeAnswer, PerformAnswer};
 
 /// An action no app offers.
 const NO_SUCH_ACTION: &str = "ui-conformance.no-such-action";
@@ -95,6 +100,9 @@ pub struct Options {
     pub act: Option<Invoke>,
     /// Where the app's work in a caller's trace can be seen.
     pub trace: Option<TraceWitness>,
+    /// The answer the host's configuration gives every takeover, as the
+    /// runner says it built the app.
+    pub takeover: Option<HoldAnswer>,
 }
 
 #[derive(Deserialize)]
@@ -161,9 +169,11 @@ pub async fn run(client: &UiClient, options: &Options) -> Result<Report, ClientF
         suite.acting(&offer, options).await;
     }
     suite.input(&offer).await;
+    suite.a_configured_takeover(&offer, options.takeover).await;
     suite.going_back(&offer, options).await;
     suite.its_replay_policy(&offer);
     suite.fixtures(&offer, options).await;
+    suite.screencasts(&offer).await;
     Ok(Report { app: offer.app, cases: suite.cases })
 }
 
@@ -415,7 +425,7 @@ impl Suite<'_> {
         if !offer.answers(UI_INPUT) {
             return self.record("§10", claim, Verdict::Unreachable("the offer does not name ui/input".to_string()));
         }
-        let mut broken = None;
+        let (mut broken, mut declining) = (None, None);
         for kind in SOURCE_KINDS {
             let pause = Source { id: "source".to_string(), kind: kind.to_string(), steps: vec![Step::Pause { ms: 1 }] };
             broken = match self.client.perform(&Perform::of(vec![pause])).await {
@@ -426,6 +436,10 @@ impl Suite<'_> {
                 {
                     None
                 }
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    declining = Some(refused);
+                    None
+                }
                 Ok(other) => Some(format!("a {kind} was answered {other:?}")),
                 Err(fault) => Some(fault.to_string()),
             };
@@ -433,7 +447,10 @@ impl Suite<'_> {
                 break;
             }
         }
-        self.check("§10", claim, broken);
+        match declining {
+            Some(refused) if broken.is_none() => self.record("§10", claim, declined(&refused)),
+            _ => self.check("§10", claim, broken),
+        }
     }
 
     async fn acting(&mut self, offer: &Offer, options: &Options) {
@@ -569,6 +586,45 @@ impl Suite<'_> {
         self.check("§10", claim, broken);
     }
 
+    async fn a_configured_takeover(&mut self, offer: &Offer, configured: Option<HoldAnswer>) {
+        let claim = "a takeover is answered as the host's configuration says, before any of the sequence runs";
+        if !offer.input.is_some_and(|input| input.takeover) {
+            let why = "the offer does not say the app holds a takeover".to_string();
+            return self.record("§10", claim, Verdict::Unreachable(why));
+        }
+        let pause = Source { id: "keys".to_string(), kind: "key".to_string(), steps: vec![Step::Pause { ms: 1 }] };
+        let perform = Perform { takeover: true, ..Perform::of(vec![pause]) };
+        let started = std::time::Instant::now();
+        let broken = match configured {
+            Some(HoldAnswer::Refuse) => match self.client.perform(&perform).await {
+                Ok(PerformAnswer::Refused(refused))
+                    if refused.code == RefusalCode::TakeoverNotGranted && refused.why.contains("configuration") =>
+                {
+                    None
+                }
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    return self.record("§10", claim, declined(&refused));
+                }
+                Ok(other) => Some(format!("configured to refuse, answered {other:?}")),
+                Err(fault) => Some(fault.to_string()),
+            },
+            Some(HoldAnswer::Allow) => match self.client.perform(&perform).await {
+                Ok(PerformAnswer::Done { .. }) if started.elapsed().as_millis() < u128::from(TAKEOVER_ASK_MS) => None,
+                Ok(PerformAnswer::Done { .. }) => Some(format!("answered after {:?}, as an ask would", started.elapsed())),
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    return self.record("§10", claim, declined(&refused));
+                }
+                Ok(other) => Some(format!("configured to allow, answered {other:?}")),
+                Err(fault) => Some(fault.to_string()),
+            },
+            Some(HoldAnswer::Ask) | None => {
+                let why = "the runner names no configured answer, and only a person answers an ask".to_string();
+                return self.record("§10", claim, Verdict::Unreachable(why));
+            }
+        };
+        self.check("§10", claim, broken);
+    }
+
     async fn the_watchable_pace(&mut self, offer: &Offer, live: &LiveFrame) {
         let claim = "a click at the watchable pace answers no sooner than its floor";
         if !offer.input.is_some_and(|input| input.presents) {
@@ -584,6 +640,9 @@ impl Suite<'_> {
             Ok(PerformAnswer::Done { .. }) => {
                 let took = started.elapsed().as_millis() as u64;
                 (took < WATCHABLE_PRESS_MS).then(|| format!("answered in {took} ms, under the floor of {WATCHABLE_PRESS_MS} ms"))
+            }
+            Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                return self.record("§10", claim, declined(&refused));
             }
             Ok(other) => Some(format!("{other:?}")),
             Err(fault) => Some(fault.to_string()),
@@ -635,6 +694,9 @@ impl Suite<'_> {
         let source = Source { id: "pointer".to_string(), kind: "mouse".to_string(), steps: vec![step] };
         let broken = match self.client.perform(&Perform::of(vec![source])).await {
             Ok(PerformAnswer::Done { frame: Some(_) }) => None,
+            Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                return self.record("§10", claim, declined(&refused));
+            }
             Ok(other) => Some(format!("{other:?}")),
             Err(fault) => Some(fault.to_string()),
         };
@@ -1258,7 +1320,7 @@ fn why_unreadable() -> String {
 }
 
 fn present_call(fixture: Fixture, fingerprint: &str, if_match: Option<&str>) -> PresentCall {
-    PresentCall { fixture, fingerprint: fingerprint.to_string(), if_match: if_match.map(str::to_string) }
+    PresentCall { fixture, fingerprint: fingerprint.to_string(), if_match: if_match.map(str::to_string), mark: None }
 }
 
 /// How `answer` differs from a refusal of `code` about `subject`, if it does.
@@ -1310,6 +1372,211 @@ pub async fn a_session_end_releases_its_fixture(socket: &Path) -> Case {
     }
     let _ = staying.release(&ReleaseCall { handle }).await;
     case(Verdict::Broken(format!("it still shows {shown:?}")))
+}
+
+/// A handle no endpoint casts.
+const NO_SUCH_SCREENCAST: &str = "ui-conformance.no-such-screencast";
+const UI_SCREENCAST_3: &str = "ui-screencast §3";
+const UI_SCREENCAST_2: &str = "ui-screencast §2";
+
+impl Suite<'_> {
+    async fn screencasts(&mut self, offer: &Offer) {
+        let claim = "the offer says how the app keeps time for a screencast exactly when it names ui/screencast, and never offers sampled";
+        let broken = check_screencast_offer(offer).err().map(|fault| format!("{fault:?}"));
+        self.check(UI_SCREENCAST_3, claim, broken);
+        self.marking(offer).await;
+        let (sampled, unknown) = (
+            "a cast naming the sampled clock is refused as unoffered_clock before anything plays",
+            "frames for a handle the endpoint never cast is refused as unknown_screencast",
+        );
+        if !offer.answers(x0k_ui_protocol::offer::UI_SCREENCAST) {
+            let why = "the offer does not name ui/screencast".to_string();
+            self.record(UI_SCREENCAST_3, sampled, Verdict::Unreachable(why.clone()));
+            return self.record(UI_SCREENCAST_2, unknown, Verdict::Unreachable(why));
+        }
+        let call = CastCall {
+            run: Vec::new(),
+            fps: 10,
+            max_ms: 100,
+            settle_ms: 0,
+            clock: Some(Clock::Sampled),
+            parts: vec![FramePart::State],
+            region: None,
+            scale: None,
+            presented: false,
+            date: None,
+        };
+        let broken = match self.client.cast(&call, std::time::Duration::from_secs(30)).await {
+            Ok(CastAnswer::Refused(refused))
+                if refused.code == RefusalCode::UnofferedClock && refused.subject.as_deref() == Some("sampled") =>
+            {
+                None
+            }
+            Ok(other) => Some(format!("answered {other:?}")),
+            Err(fault) => Some(fault.to_string()),
+        };
+        self.check(UI_SCREENCAST_3, sampled, broken);
+        let frames = FramesCall {
+            handle: NO_SUCH_SCREENCAST.to_string(),
+            indices: vec![0],
+            parts: vec![FramePart::State],
+            region: None,
+            scale: None,
+        };
+        let broken = match self.client.frames(&frames).await {
+            Ok(FramesAnswer::Refused(refused))
+                if refused.code == RefusalCode::UnknownScreencast && refused.subject.as_deref() == Some(NO_SUCH_SCREENCAST) =>
+            {
+                None
+            }
+            Ok(other) => Some(format!("answered {other:?}")),
+            Err(fault) => Some(fault.to_string()),
+        };
+        self.check(UI_SCREENCAST_2, unknown, broken);
+    }
+
+    /// `ui-interfaces` §4: the fixture mark, and `mark: false` in and outside
+    /// a dev instance.
+    async fn marking(&mut self, offer: &Offer) {
+        self.mark_required(offer).await;
+        self.mark_drawn(offer).await;
+        self.mark_left_off(offer).await;
+    }
+
+    /// `mark: false` outside a dev instance.
+    async fn mark_required(&mut self, offer: &Offer) {
+        let claim = "a present asking mark: false of an instance that is not a dev instance is refused as mark_required";
+        let takes = offer.answers(UI_HISTORY) && offer.history.as_ref().is_some_and(|held| held.fixtures);
+        if !takes || offer.dev_instance {
+            let why = match takes {
+                false => "the app takes no state fixtures",
+                true => "the app runs as a dev instance, which honours mark: false",
+            };
+            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why.to_string()));
+        }
+        let Some(live) = self.live_state().await else {
+            let why = "the app answers no state to write a fixture against".to_string();
+            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
+        };
+        let mut call = present_call(Fixture::Patch { patch: json!({}) }, &live.fingerprint, Some(&live.head));
+        call.mark = Some(false);
+        let answer = self.client.present(&call).await;
+        if let Ok(PresentAnswer::Presented { handle, .. }) = &answer {
+            let _ = self.client.release(&ReleaseCall { handle: handle.clone() }).await;
+        }
+        let broken = refused_as(answer, RefusalCode::MarkRequired, Some(UI_HISTORY));
+        self.check(UI_INTERFACES_4, claim, broken);
+    }
+
+    /// The handle of a fixture `present` shows, asking `mark` of it, over the
+    /// live state; or the verdict when none can be shown.
+    async fn marked_fixture(&mut self, offer: &Offer, mark: Option<bool>) -> Result<String, Verdict> {
+        let takes = offer.answers(UI_HISTORY) && offer.history.as_ref().is_some_and(|held| held.fixtures);
+        if !takes {
+            return Err(Verdict::Unreachable("the app takes no state fixtures".to_string()));
+        }
+        if !offer.input.is_some_and(|input| input.presents) {
+            return Err(Verdict::Unreachable("the offer does not say the host draws over the window".to_string()));
+        }
+        let Some(live) = self.live_state().await else {
+            return Err(Verdict::Unreachable("the app answers no state to write a fixture against".to_string()));
+        };
+        let mut call = present_call(Fixture::Patch { patch: json!({}) }, &live.fingerprint, Some(&live.head));
+        call.mark = mark;
+        match self.client.present(&call).await {
+            Ok(PresentAnswer::Presented { handle, .. }) => Ok(handle),
+            Ok(PresentAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => Err(declined(&refused)),
+            Ok(other) => Err(Verdict::Broken(format!("the fixture was not presented: {other:?}"))),
+            Err(fault) => Err(Verdict::Broken(fault.to_string())),
+        }
+    }
+
+    /// Whether a capture, with the host's drawing or of the frame alone,
+    /// shows the fixture mark's ink where its band lies.
+    async fn band_inked(&mut self, frame_only: bool) -> Result<bool, Verdict> {
+        let call = ObserveCall { parts: vec![Part::Capture], region: None, scale: None, frame_only };
+        let observation = match self.client.observe(&call).await {
+            Ok(observation) => observation,
+            Err(fault) => return Err(Verdict::Broken(fault.to_string())),
+        };
+        let Some(capture) = observation.capture else {
+            return Err(Verdict::Unreachable("the app gave no capture".to_string()));
+        };
+        let x = (FIXTURE_BAND / 2.0 * capture.scale_factor).round() as u32;
+        match pixel(&capture.png, x, capture.height / 2) {
+            Ok(seen) => Ok(seen == FIXTURE_INK),
+            Err(fault) => Err(Verdict::Broken(format!("the capture does not read: {fault}"))),
+        }
+    }
+
+    /// The mark drawn while a fixture stands, in the host's drawing alone.
+    async fn mark_drawn(&mut self, offer: &Offer) {
+        let claim = "while a fixture stands, a capture with the host's drawing shows the fixture mark, and the frame alone does not";
+        let handle = match self.marked_fixture(offer, None).await {
+            Ok(handle) => handle,
+            Err(verdict) => return self.record(UI_INTERFACES_4, claim, verdict),
+        };
+        let (drawn, alone) = (self.band_inked(false).await, self.band_inked(true).await);
+        let _ = self.client.release(&ReleaseCall { handle }).await;
+        let verdict = match (drawn, alone) {
+            (Err(verdict), _) | (_, Err(verdict)) => verdict,
+            (Ok(true), Ok(false)) => Verdict::Holds,
+            (Ok(false), _) => Verdict::Broken("a capture with the host's drawing shows no fixture mark".to_string()),
+            (Ok(true), Ok(true)) => Verdict::Broken("a capture of the frame alone shows the fixture mark".to_string()),
+        };
+        self.record(UI_INTERFACES_4, claim, verdict);
+    }
+
+    /// `mark: false` honoured in a dev instance.
+    async fn mark_left_off(&mut self, offer: &Offer) {
+        let claim = "a dev instance honours a present asking mark: false: the fixture stands, and no capture shows the fixture mark";
+        if !offer.dev_instance {
+            let why = "the app is no dev instance, which refuses mark: false".to_string();
+            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
+        }
+        let handle = match self.marked_fixture(offer, Some(false)).await {
+            Ok(handle) => handle,
+            Err(verdict) => return self.record(UI_INTERFACES_4, claim, verdict),
+        };
+        let drawn = self.band_inked(false).await;
+        let _ = self.client.release(&ReleaseCall { handle }).await;
+        let verdict = match drawn {
+            Err(verdict) => verdict,
+            Ok(false) => Verdict::Holds,
+            Ok(true) => Verdict::Broken("a fixture presented with mark: false shows the fixture mark".to_string()),
+        };
+        self.record(UI_INTERFACES_4, claim, verdict);
+    }
+}
+
+/// Why a capture's pixel cannot be read.
+#[derive(Debug, thiserror::Error)]
+enum PixelFault {
+    #[error("the PNG does not decode: {0}")]
+    Decode(#[from] png::DecodingError),
+    #[error("({x}, {y}) lies outside the {width}x{height} image")]
+    Outside { x: u32, y: u32, width: u32, height: u32 },
+    #[error("the image ends before the pixel")]
+    Short,
+}
+
+/// The colour of the pixel at (`x`, `y`) of `png`, as `[r, g, b]`.
+fn pixel(png: &[u8], x: u32, y: u32) -> Result<[u8; 3], PixelFault> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info()?;
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut pixels)?;
+    if x >= info.width || y >= info.height {
+        return Err(PixelFault::Outside { x, y, width: info.width, height: info.height });
+    }
+    let channels = info.color_type.samples();
+    let at = y as usize * info.line_size + x as usize * channels;
+    let sample = |offset: usize| pixels.get(at + offset).copied().ok_or(PixelFault::Short);
+    match info.color_type {
+        png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => Ok([sample(0)?; 3]),
+        _ => Ok([sample(0)?, sample(1)?, sample(2)?]),
+    }
 }
 
 /// Whether an oversized frame from a peer costs that connection and not the app.

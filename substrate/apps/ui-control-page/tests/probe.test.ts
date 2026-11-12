@@ -7,7 +7,7 @@ import { heldCapture } from '../src/held-capture.ts';
 import { PAGE_GLOBAL, UI_GLOBAL, pageScript } from '../src/page-script.ts';
 import { chromium } from './hosts/chromium.ts';
 import type { Engine, Image } from './hosts/engine.ts';
-import { DRAWN_INK, drawnApart, judge, type ProbeRead } from './hosts/probe-judge.ts';
+import { DRAWN_INK, FIXTURE_INK, drawnApart, judge, type ProbeRead } from './hosts/probe-judge.ts';
 import { webkitgtk } from './hosts/webkitgtk.ts';
 
 const PAGE = fileURLToPath(new URL('./probe-page.html', import.meta.url));
@@ -112,6 +112,28 @@ for (const [name, start] of ENGINES.filter(([name]) => !only || only.some((o) =>
       t.diagnostic(`inside the pointer: drawn ${shown}, frame alone ${alone}`);
       assert.deepEqual(shown, DRAWN_INK);
       assert.notDeepEqual(alone, DRAWN_INK);
+    });
+    test('the host\'s fixture mark is drawn only while the fixture it names stands, and never in the frame alone', async (t) => {
+      const bandAt = async (frameOnly: boolean) => {
+        const held = await heldCapture({
+          hold: async () => JSON.parse(await engine.evaluate(`return JSON.stringify(await globalThis.${PAGE_GLOBAL}.hold(() => window.probeRead(), { frameOnly: ${frameOnly} }));`)),
+          capture: async () => engine.capture(),
+          verify: async () => Number(await engine.evaluate(`return String(globalThis.${PAGE_GLOBAL}.verify());`)),
+        });
+        assert.ok(held.capture, held.refused?.why);
+        const k = held.capture.width / held.read.width;
+        return held.capture.rgb(Math.round(3 * k), Math.round(150 * k));
+      };
+      const drawn = `globalThis.${PAGE_GLOBAL}.drawn`;
+      await engine.evaluate(`${drawn}.standing('x1'); ${drawn}.paint({ units: 0, pointers: [], clicks: [], fixture: 'x1' }); return '';`);
+      const [standing, alone] = [await bandAt(false), await bandAt(true)];
+      await engine.evaluate(`${drawn}.standing(null); return '';`);
+      const gone = await bandAt(false);
+      await engine.evaluate(`${drawn}.paint({ units: 0, pointers: [], clicks: [] }); return '';`);
+      t.diagnostic(`at the band: standing ${standing}, frame alone ${alone}, after the fixture went ${gone}`);
+      assert.deepEqual(standing, FIXTURE_INK, 'no band while the fixture stood');
+      assert.notDeepEqual(alone, FIXTURE_INK, 'the frame alone showed the band');
+      assert.notDeepEqual(gone, FIXTURE_INK, 'the band outlived the fixture');
     });
     test('a page\'s declared look colours its drivers\' input, and the host\'s own colour returns with none', async (t) => {
       const inked = async (look: string, hue: number) => {

@@ -16,11 +16,14 @@ use x0k_ui_protocol::history::{HistoryCall, NavigateCall};
 use x0k_ui_protocol::input::{Perform, TAKEOVER_ASK_MS};
 use x0k_ui_protocol::observe::{Observation, ObserveCall};
 use x0k_ui_protocol::offer::Offer;
+use x0k_ui_protocol::screencast::{CastCall, DiscardCall, FramesCall};
 
+use crate::screencast::decode_frames;
 use crate::wire::{from_wire, decode_observation, to_wire, BadValue};
 use crate::{
-    shapes, HistoryAnswer, InvokeAnswer, NavigateAnswer, PerformAnswer, PresentAnswer, ReleaseAnswer, HISTORY,
-    INVOKE, NAVIGATE, OBSERVE, OFFER, PERFORM, PRESENT, RELEASE,
+    shapes, CastAnswer, DiscardAnswer, FramesAnswer, HistoryAnswer, InvokeAnswer, NavigateAnswer, PerformAnswer,
+    PresentAnswer, ReleaseAnswer, CAST, DISCARD, FRAMES, HISTORY, INVOKE, NAVIGATE, OBSERVE, OFFER, PERFORM,
+    PRESENT, RELEASE,
 };
 
 /// How long a call waits for its answer.
@@ -222,6 +225,26 @@ impl UiClient {
     /// Return from a state fixture to the live state.
     pub async fn release(&self, call: &ReleaseCall) -> Result<ReleaseAnswer, ClientFault> {
         let answer = self.call(RELEASE, EffectCeiling::IdempotentWrite, to_wire(call)?, DEADLINE).await?;
+        Ok(from_wire(&answer)?)
+    }
+
+    /// Play a run and keep its frames, waiting as long as `deadline`: a
+    /// stepped screencast takes the wall's time each frame costs, and a hold
+    /// the person is asked for waits on their answer.
+    pub async fn cast(&self, call: &CastCall, deadline: Duration) -> Result<CastAnswer, ClientFault> {
+        let answer = self.call(CAST, EffectCeiling::NonIdempotent, to_wire(call)?, deadline).await?;
+        Ok(from_wire(&answer)?)
+    }
+
+    /// Read frames of the screencast the session holds.
+    pub async fn frames(&self, call: &FramesCall) -> Result<FramesAnswer, ClientFault> {
+        let answer = self.call(FRAMES, EffectCeiling::ReadOnly, to_wire(call)?, DEADLINE).await?;
+        Ok(decode_frames(&answer)?)
+    }
+
+    /// Drop the screencast the session holds.
+    pub async fn discard(&self, call: &DiscardCall) -> Result<DiscardAnswer, ClientFault> {
+        let answer = self.call(DISCARD, EffectCeiling::IdempotentWrite, to_wire(call)?, DEADLINE).await?;
         Ok(from_wire(&answer)?)
     }
 }

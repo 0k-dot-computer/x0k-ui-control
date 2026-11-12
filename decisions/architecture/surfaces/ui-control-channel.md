@@ -14,7 +14,8 @@ architecture:ui-control-channel a x0k:Architecture ;
         architecture:operation-surface,
         architecture:core-and-edges,
         architecture:graded-introspection,
-        architecture:ui-interfaces ;
+        architecture:ui-interfaces,
+        architecture:ui-screencast ;
     x0k:motivatedBy intent:396792f0-be07-c3dd-e35d-a95f93c74fe3,
         intent:761c189e-6c4d-b04a-4f07-3812cca3780d,
         intent:cf7be0e5-3667-afc6-728b-3a9d96c51507 .
@@ -44,7 +45,12 @@ protocol, and one set of driver tools reaches all of them. The first thing
 a driver can do is look: read what an app offers, and take its screenshot,
 its layout tree and its presentable state from one frame, with no power to
 change anything. Then it can act, as the app's own user would: invoke one
-of the actions the app names, or move a pointer and type.
+of the actions the app names, or move a pointer and type. A driver may
+also take the window over for a while, holding back the person's own input.
+Whether the person is asked first depends on how the app's host is set up:
+a window someone works in asks them, and an app that runs its agents in a
+loop may let them take over freely. Either way the person sees who holds
+their window and can take it back at once.
 
 Nothing about an action exchange outlives it on disk. The record of
 what was done — which actions ran, when, at whose request, with what
@@ -274,7 +280,9 @@ suite (intent 1f4dc28c).
   - `layout`: the layout tree. Each node has an id, a role, a label, a
     value, its bounds in the capture's pixel coordinates, which are the
     part of it that shows, the box it was laid out in when clipping cuts it
-    down to that, whether it is visible, enabled, focused and interactive, the named action it maps to
+    down to that, whether it is visible, enabled, focused and interactive,
+    optionally its opacity as shown, the product of its own and its
+    ancestors', the named action it maps to
     if it maps to one, the composition leaf it belongs to if it belongs to
     one, and its children. A node's id names the same part of the surface
     from frame to frame for as long as that part stands, and no two nodes
@@ -332,8 +340,13 @@ person's; the sequence runs in order, and the app answers once it has
 handled the whole sequence; the app's host presents every sequence it
 delivers, unless the call opts out, over the app's window and outside the
 app's frame, layout and state, labelled with the requester's name; the
-person's own input keeps running beside a sequence unless the person grants
-the sequence a takeover; only a person's input answers a takeover's ask.
+person's own input keeps running beside a sequence unless a takeover holds
+the window; whether a takeover asks the person, holds without asking or is
+refused is the host's configuration of its endpoint, which asks when nothing
+is configured and reads nothing the driver says of itself; only a person's
+input answers a takeover's ask; while a takeover holds the window, however it
+was allowed, the host shows that it does, naming the requester, and the
+person's exit input ends it at once.
 **On failure:** a sequence that names an unknown source, an unknown key, a
 position outside the frame, or a layout node the named frame does not hold
 is refused by name before any of it runs; input to an app whose offer does
@@ -343,14 +356,22 @@ refused as `undeliverable_source` before any of the sequence runs, never as
 an unknown source. While the app's host cannot paint its window, it refuses
 the sequence as `cannot_paint` before any of it runs (§8). A takeover the
 offer does not say the host holds is refused as `takeover_unheld`, and a
-takeover the person does not grant is refused as `takeover_not_granted`,
-naming the requester; each is refused before any of the sequence runs.
+takeover the host's configuration refuses, or the person does not grant, is
+refused as `takeover_not_granted`, naming the requester and which of the two
+refused it; each is refused before any of the sequence runs. The
+app may decline a sequence for now, whatever it shows, for the reason it
+gives, such as a person using the window; it refuses the sequence as
+`declined`, naming `ui/input`, before any of it runs (below, "Declining
+input for now").
 **Checked by:** the `ui/input` vectors of the UI-control conformance suite
 (intent 1f4dc28c), among them a takeover the offer does not hold and the
-watchable pace's floor; the endpoint's test that a takeover runs only when
-the person grants it (`x0k:implementation/ui-control/endpoint`); the
-presentation model's tests that a takeover is held only after a yes and that
-the exit key ends it (`x0k:implementation/ui-control/protocol`).
+watchable pace's floor; the endpoint's tests that a takeover the host's
+configuration asks for runs only when the person grants it, that one it
+allows holds without an ask, that one it refuses is refused without one, and
+that a configuration naming `requester_name` is refused as unreadable
+(`x0k:implementation/ui-control/endpoint`); the presentation model's tests
+that a takeover is held only after a yes or an allow, and that the exit key
+ends it however it was allowed (`x0k:implementation/ui-control/protocol`).
 
 `ui/input` has one operation:
 
@@ -395,19 +416,116 @@ nothing else; the drawing keeps each requester apart by its credentials.
   delivers each event when the pointer reaches it. Each press and each key
   lands no sooner than 250 ms after the event before it, and a look may
   wait longer, never shorter. The answer comes later by that travel.
-- **`takeover`**, off by default. A takeover runs only under the person's
-  permission. The permission the person gives the driver's action grants
-  the takeover the driver asks for with it, and a sequence whose action
-  needs no permission asks the person for the takeover alone. The host
-  waits at most 30 seconds for the person's answer, and no answer is a no.
-  From the person's yes to the sequence's answer, the host holds back the
-  person's input to the app's window and shows that it does, naming the
-  requester and the input that ends the takeover. The person ends it at
-  once with that input (`design:ui-driver`, "Letting a demonstration
-  finish"). A window holds one takeover at a time, so a takeover asked for
-  while another stands is not granted.
+- **`takeover`**, off by default. From when a takeover is allowed to the
+  sequence's answer, the host holds back the person's input to the app's
+  window and shows that it does, naming the requester and the input that
+  ends the takeover. The person ends it at once with that input
+  (`design:ui-driver`, "Letting a demonstration finish"). Whether a
+  takeover asks the person first is the host's configuration (below, "Who
+  allows a takeover"). Where it asks, the permission the person gives the
+  driver's action grants the takeover the driver asks for with it, and a
+  sequence whose action needs no permission asks the person for the
+  takeover alone; the host waits at most 30 seconds for the person's
+  answer, and no answer is a no. A window holds one takeover at a time, so
+  a takeover asked for while another stands is not granted.
 
-<a name="folio-instance-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1"></a><sub data-instance-iri="x0k:techne/present-a-driver-s-input" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/present-a-driver-s-input</code> · <a href="#folio-source-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1">source declaration</a> · the graph block at line 411 is not Turtle: The prefix techne: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md:410</sub><a name="folio-source-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1"></a>
+**Declining input for now.** A person and a driver may share one window, and
+an app may keep some acts a person's alone: approving an agent's own request,
+applying its code. So the app may decline a driver's sequence for now, at any
+time and not only while a fixture stands (`ui-interfaces` §4), for the reason
+it gives, such as "the person is using the window". It refuses it as
+`declined`, naming `ui/input`, after every other check and before a takeover
+is asked for, so a driver hears first what holds of the sequence wherever it
+is sent, and nothing of it runs. `declined` is the same word §4 gives a call
+the app declines under a fixture: the call fits, the app's own condition
+refuses it for now, and the reason is for a person. A driver may send the
+sequence again later.
+
+The app may also wait before it answers, for its condition to pass, at most
+as long as it says. A sequence it lets run after waiting runs whole, from its
+first tick, with its own pauses and pace, as if it had just arrived; the app
+never waits between a sequence's ticks, since a button or a key a sequence
+holds spans its ticks. One it still declines when its wait ends is refused as
+`declined` with its reason. Declining reads nothing the driver says of
+itself: `requester_name` is a label, and the app decides by its own
+condition and the requester its connection names.
+
+**Who allows a takeover.** A takeover stops a person from using their own
+window, so by default the host asks them first. Some hosts know better who is
+at the window. Chariot may let the agents it runs in a loop take over its
+window whenever they ask, and another host may refuse every takeover from a
+process it did not start. So whether a takeover asks the person, holds
+without asking or is refused is the host's to configure, once, where it
+builds its endpoint. A driver asks for a takeover and never for its answer.
+The configuration is
+one value the endpoint reads, the same on every host: a Tauri app hands it to
+the plugin's builder, and x0k's shell reads it from its configuration file.
+
+The configuration is a list of rules and a default answer. Each rule names
+what it matches and one answer:
+
+- `ask`: the host asks the person, as the `takeover` option above says;
+- `allow`: the takeover holds the window without asking;
+- `refuse`: the takeover is refused as `takeover_not_granted`, naming the
+  requester and the host's configuration, and no one is asked.
+
+The first rule that matches answers, and with none matching the default
+does. A host that configures nothing asks. A host where no person can answer
+at the window refuses what its configuration says to ask. A rule matches on
+these, and on nothing else:
+
+- the kind of hold: a sequence's takeover, or a stepped screencast's hold of
+  the window (`ui-screencast` §5);
+- the grant the connection holds: its interfaces and the side-effect
+  classes they allow (`ui-interfaces` §1);
+- the requester the connection names (`ui-interfaces` §6): on a local
+  socket the peer's user and process, which a host may match against the
+  processes it started itself, and on the daemon's connection the requester
+  `on_behalf_of` names;
+- whether the app runs as a dev instance (`ui-interfaces` §5).
+
+No rule reads `requester_name`. It is a label the driver gives itself, and a
+rule that read it would let a driver pick its own answer by naming itself.
+
+Whatever answered, the person sees the same hold. While a takeover holds the
+window the host shows that it does, naming the requester and the input that
+ends it, and that input ends it at once. No configuration hides the notice or
+turns off the exit, so a hold the person never agreed to is still one they
+see and can end. The exit ends the takeover that stands and changes no rule:
+under `allow`, the requester's next takeover holds again. A host that keeps
+the window for a person for longer declines a driver's input for now (above).
+
+Under one sequence, the order is the endpoint's checks, then what the app
+declines for now, then the host's configuration, then the person's answer
+where the configuration asks. So a configuration that allows a takeover never
+runs a sequence the app's own condition declines or holds back: it answers
+only for a sequence the app has let run. A stepped screencast's hold is
+answered by the same configuration when its `cast` is admitted, before
+anything plays, and each `perform` step of its run meets what the app
+declines as it plays (`ui-screencast` §2).
+
+**Declining input for now.** A person and a driver may share one window, and
+an app may keep some acts a person's alone: approving an agent's own request,
+applying its code. So the app may decline a driver's sequence for now, at any
+time and not only while a fixture stands (`ui-interfaces` §4), for the reason
+it gives, such as "the person is using the window". It refuses it as
+`declined`, naming `ui/input`, after every other check and before a takeover
+is asked for, so a driver hears first what holds of the sequence wherever it
+is sent, and nothing of it runs. `declined` is the same word §4 gives a call
+the app declines under a fixture: the call fits, the app's own condition
+refuses it for now, and the reason is for a person. A driver may send the
+sequence again later.
+
+The app may also wait before it answers, for its condition to pass, at most
+as long as it says. A sequence it lets run after waiting runs whole, from its
+first tick, with its own pauses and pace, as if it had just arrived; the app
+never waits between a sequence's ticks, since a button or a key a sequence
+holds spans its ticks. One it still declines when its wait ends is refused as
+`declined` with its reason. Declining reads nothing the driver says of
+itself: `requester_name` is a label, and the app decides by its own
+condition and the requester its connection names.
+
+<a name="folio-instance-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1"></a><sub data-instance-iri="x0k:techne/present-a-driver-s-input" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/present-a-driver-s-input</code> · <a href="#folio-source-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1">source declaration</a> · the graph block at line 529 is not Turtle: The prefix techne: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md:528</sub><a name="folio-source-78306b3a746563686e652f70726573656e742d612d6472697665722d732d696e707574-1"></a>
 
 ```turtle folio:graph
 @prefix techne: <https://0k.computer/ontology#techne/> .
@@ -456,6 +574,17 @@ being the canonical record set: control history interleaved with
 everything else — sync activity, daemon health, agent turns — answers
 the questions an operator actually asks of it, which a private archive
 inside the transport never could.
+
+A takeover's answer is the host's configuration because only the host knows
+who sits at its window. An app whose window a person uses all day should ask
+them; an app that runs agents in a loop against a window no one is using, as
+chariot may, should not stop each sequence for a person who is not there.
+One rule with one default serves both, and the rejected alternative, an
+exception for a dev instance alone, made the instance the only thing a host
+could choose by. The rule matches on what the connection proves, its grant
+and its peer, and never on the name a driver gives itself. And the person's
+notice and exit stand under every answer, because a hold that no one was
+asked about is acceptable only while the person can see it and end it.
 
 ## Consequences
 
@@ -507,15 +636,18 @@ inside the transport never could.
   rather than residing in it.
 - [operation-surface](../platform/operation-surface.md) — §1's canonical CBOR frames
   and carriers, which the endpoint protocol (§7) adopts.
-- [core-and-edges](core-and-edges.md) — §2 names the four UI interfaces
+- [core-and-edges](core-and-edges.md) — §2 names the UI interfaces
   and the edges by reach; §7 gives the ui-control edge its wire, and §8
   gives `ui/observe` its operations.
 - [graded-introspection](../substrate/graded-introspection.md) — §9's
   `inspect`, which performs nothing, is why observing needs no replay
   policy.
-- [ui-interfaces](ui-interfaces.md) — proposed: `ui/history`, state
-  fixtures, the offer's grades and replay policy, the frame bound, the edges
-  by reach and conformance at installation.
+- [ui-interfaces](ui-interfaces.md) — `ui/history`, state fixtures, the
+  offer's grades, replay policy and dev instance, the frame bound and the
+  requester, the edges by reach and conformance at installation.
+- [ui-screencast](ui-screencast.md) — `ui/screencast`, whose stepped clock
+  holds the window as a takeover does and is answered by the same
+  configuration (§10), and whose element series read §8's opacity.
 
 ## Open Questions
 
@@ -560,3 +692,15 @@ inside the transport never could.
   `761c189e-6c4d-b04a-4f07-3812cca3780d`, which decided them ahead of
   `ui/history`, since acting in the present needs no decision about going
   back.
+- Declining input for now (§10) is motivated by intent
+  `98a87ce7-e314-ba2a-dda1-2ba69de5521d`: chariot, an app that embeds the
+  Tauri plugin, yields its window to the person and refuses a driver's input
+  while the person uses it. It widens `declined` rather than adding a code,
+  since its meaning holds unchanged: the call fits, and the app declines it
+  for now for the reason it gives.
+- Who allows a takeover (§10) is motivated by intent
+  `b55f7dfc-c329-dc53-d007-e73336ff30c2`: the operator set it to the host's
+  configuration of its endpoint, with chariot's agents in a loop as the case
+  a dev-instance exception could not serve. It adds no refusal code: a
+  takeover the configuration refuses is not granted, as one the person
+  refuses is.

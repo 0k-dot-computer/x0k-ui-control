@@ -54,6 +54,12 @@
               "kind": "text"
             }
           },
+          "dev_instance": {
+            "presence": "optional",
+            "shape": {
+              "kind": "bool"
+            }
+          },
           "grades": {
             "presence": "optional",
             "shape": {
@@ -324,6 +330,53 @@
               }
             }
           },
+          "screencast": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "fields": {
+                  "clocks": {
+                    "shape": {
+                      "kind": "list",
+                      "of": {
+                        "kind": "enum",
+                        "spelling": "text",
+                        "variants": {
+                          "sampled": {},
+                          "stepped": {},
+                          "streamed": {}
+                        }
+                      }
+                    }
+                  },
+                  "max_frames": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "max_ms": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "unstepped": {
+                    "presence": "optional",
+                    "shape": {
+                      "kind": "list",
+                      "of": {
+                        "kind": "text"
+                      }
+                    }
+                  }
+                },
+                "kind": "struct",
+                "open": true
+              }
+            }
+          },
           "state_head": {
             "presence": "optional",
             "shape": {
@@ -584,6 +637,15 @@
                       }
                     }
                   },
+                  "opacity": {
+                    "presence": "optional",
+                    "shape": {
+                      "kind": "maybe",
+                      "of": {
+                        "kind": "float"
+                      }
+                    }
+                  },
                   "role": {
                     "shape": {
                       "kind": "text"
@@ -633,14 +695,17 @@
                         "spelling": "text",
                         "variants": {
                           "cannot_paint": {},
+                          "capture_not_permitted": {},
                           "declined": {},
                           "duplicate_source": {},
                           "fixture_ended": {},
+                          "mark_required": {},
                           "misfit_arguments": {},
                           "misfit_state": {},
                           "no_fixtures": {},
                           "no_history_interface": {},
                           "no_input_interface": {},
+                          "no_screencast_interface": {},
                           "outside_frame": {},
                           "outside_grant": {},
                           "policy_refuses": {},
@@ -654,7 +719,9 @@
                           "unknown_key": {},
                           "unknown_node": {},
                           "unknown_position": {},
+                          "unknown_screencast": {},
                           "unknown_source": {},
+                          "unoffered_clock": {},
                           "unreadable_policy": {},
                           "unreadable_shape": {},
                           "wrong_fingerprint": {},
@@ -833,14 +900,17 @@
                     "spelling": "text",
                     "variants": {
                       "cannot_paint": {},
+                      "capture_not_permitted": {},
                       "declined": {},
                       "duplicate_source": {},
                       "fixture_ended": {},
+                      "mark_required": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
                       "no_history_interface": {},
                       "no_input_interface": {},
+                      "no_screencast_interface": {},
                       "outside_frame": {},
                       "outside_grant": {},
                       "policy_refuses": {},
@@ -854,7 +924,9 @@
                       "unknown_key": {},
                       "unknown_node": {},
                       "unknown_position": {},
+                      "unknown_screencast": {},
                       "unknown_source": {},
+                      "unoffered_clock": {},
                       "unreadable_policy": {},
                       "unreadable_shape": {},
                       "wrong_fingerprint": {},
@@ -1203,14 +1275,17 @@
                     "spelling": "text",
                     "variants": {
                       "cannot_paint": {},
+                      "capture_not_permitted": {},
                       "declined": {},
                       "duplicate_source": {},
                       "fixture_ended": {},
+                      "mark_required": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
                       "no_history_interface": {},
                       "no_input_interface": {},
+                      "no_screencast_interface": {},
                       "outside_frame": {},
                       "outside_grant": {},
                       "policy_refuses": {},
@@ -1224,7 +1299,9 @@
                       "unknown_key": {},
                       "unknown_node": {},
                       "unknown_position": {},
+                      "unknown_screencast": {},
                       "unknown_source": {},
+                      "unoffered_clock": {},
                       "unreadable_policy": {},
                       "unreadable_shape": {},
                       "wrong_fingerprint": {},
@@ -1440,14 +1517,17 @@
                     "spelling": "text",
                     "variants": {
                       "cannot_paint": {},
+                      "capture_not_permitted": {},
                       "declined": {},
                       "duplicate_source": {},
                       "fixture_ended": {},
+                      "mark_required": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
                       "no_history_interface": {},
                       "no_input_interface": {},
+                      "no_screencast_interface": {},
                       "outside_frame": {},
                       "outside_grant": {},
                       "policy_refuses": {},
@@ -1461,7 +1541,9 @@
                       "unknown_key": {},
                       "unknown_node": {},
                       "unknown_position": {},
+                      "unknown_screencast": {},
                       "unknown_source": {},
+                      "unoffered_clock": {},
                       "unreadable_policy": {},
                       "unreadable_shape": {},
                       "wrong_fingerprint": {},
@@ -1535,14 +1617,17 @@
                     "spelling": "text",
                     "variants": {
                       "cannot_paint": {},
+                      "capture_not_permitted": {},
                       "declined": {},
                       "duplicate_source": {},
                       "fixture_ended": {},
+                      "mark_required": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
                       "no_history_interface": {},
                       "no_input_interface": {},
+                      "no_screencast_interface": {},
                       "outside_frame": {},
                       "outside_grant": {},
                       "policy_refuses": {},
@@ -1556,7 +1641,9 @@
                       "unknown_key": {},
                       "unknown_node": {},
                       "unknown_position": {},
+                      "unknown_screencast": {},
                       "unknown_source": {},
+                      "unoffered_clock": {},
                       "unreadable_policy": {},
                       "unreadable_shape": {},
                       "wrong_fingerprint": {},
@@ -1732,6 +1819,15 @@
                 "kind": "text"
               }
             }
+          },
+          "mark": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "kind": "bool"
+              }
+            }
           }
         },
         "kind": "struct",
@@ -1772,14 +1868,17 @@
                     "spelling": "text",
                     "variants": {
                       "cannot_paint": {},
+                      "capture_not_permitted": {},
                       "declined": {},
                       "duplicate_source": {},
                       "fixture_ended": {},
+                      "mark_required": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
                       "no_history_interface": {},
                       "no_input_interface": {},
+                      "no_screencast_interface": {},
                       "outside_frame": {},
                       "outside_grant": {},
                       "policy_refuses": {},
@@ -1793,7 +1892,9 @@
                       "unknown_key": {},
                       "unknown_node": {},
                       "unknown_position": {},
+                      "unknown_screencast": {},
                       "unknown_source": {},
+                      "unoffered_clock": {},
                       "unreadable_policy": {},
                       "unreadable_shape": {},
                       "wrong_fingerprint": {},
@@ -1879,14 +1980,17 @@
                     "spelling": "text",
                     "variants": {
                       "cannot_paint": {},
+                      "capture_not_permitted": {},
                       "declined": {},
                       "duplicate_source": {},
                       "fixture_ended": {},
+                      "mark_required": {},
                       "misfit_arguments": {},
                       "misfit_state": {},
                       "no_fixtures": {},
                       "no_history_interface": {},
                       "no_input_interface": {},
+                      "no_screencast_interface": {},
                       "outside_frame": {},
                       "outside_grant": {},
                       "policy_refuses": {},
@@ -1900,7 +2004,9 @@
                       "unknown_key": {},
                       "unknown_node": {},
                       "unknown_position": {},
+                      "unknown_screencast": {},
                       "unknown_source": {},
+                      "unoffered_clock": {},
                       "unreadable_policy": {},
                       "unreadable_shape": {},
                       "wrong_fingerprint": {},
@@ -1946,12 +2052,1559 @@
           }
         }
       }
+    },
+    "ui/screencast.cast": {
+      "argument": {
+        "fields": {
+          "clock": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "kind": "enum",
+                "spelling": "text",
+                "variants": {
+                  "sampled": {},
+                  "stepped": {},
+                  "streamed": {}
+                }
+              }
+            }
+          },
+          "date": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "kind": "int",
+                "min": 0
+              }
+            }
+          },
+          "fps": {
+            "shape": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "max_ms": {
+            "shape": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "parts": {
+            "shape": {
+              "kind": "list",
+              "of": {
+                "kind": "enum",
+                "spelling": "text",
+                "variants": {
+                  "animations": {},
+                  "capture": {},
+                  "layout": {},
+                  "state": {}
+                }
+              }
+            }
+          },
+          "presented": {
+            "presence": "optional",
+            "shape": {
+              "kind": "bool"
+            }
+          },
+          "region": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "fields": {
+                  "height": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "width": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "x": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "y": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  }
+                },
+                "kind": "struct",
+                "open": true
+              }
+            }
+          },
+          "run": {
+            "shape": {
+              "kind": "list",
+              "of": {
+                "fields": {
+                  "at_ms": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "step": {
+                    "shape": {
+                      "kind": "enum",
+                      "spelling": "inline",
+                      "tag": "do",
+                      "variants": {
+                        "invoke": {
+                          "payload": {
+                            "fields": {
+                              "invoke": {
+                                "shape": {
+                                  "fields": {
+                                    "action": {
+                                      "shape": {
+                                        "kind": "text"
+                                      }
+                                    },
+                                    "args": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "any"
+                                      }
+                                    }
+                                  },
+                                  "kind": "struct",
+                                  "open": true
+                                }
+                              }
+                            },
+                            "kind": "struct",
+                            "open": true
+                          }
+                        },
+                        "perform": {
+                          "payload": {
+                            "fields": {
+                              "perform": {
+                                "shape": {
+                                  "fields": {
+                                    "pace": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "enum",
+                                        "spelling": "text",
+                                        "variants": {
+                                          "fast": {},
+                                          "watchable": {}
+                                        }
+                                      }
+                                    },
+                                    "present": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "maybe",
+                                        "of": {
+                                          "kind": "bool"
+                                        }
+                                      }
+                                    },
+                                    "requester_name": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "maybe",
+                                        "of": {
+                                          "kind": "text"
+                                        }
+                                      }
+                                    },
+                                    "sources": {
+                                      "shape": {
+                                        "kind": "list",
+                                        "of": {
+                                          "fields": {
+                                            "id": {
+                                              "shape": {
+                                                "kind": "text"
+                                              }
+                                            },
+                                            "kind": {
+                                              "shape": {
+                                                "kind": "text"
+                                              }
+                                            },
+                                            "steps": {
+                                              "shape": {
+                                                "kind": "list",
+                                                "of": {
+                                                  "kind": "enum",
+                                                  "spelling": "inline",
+                                                  "tag": "do",
+                                                  "variants": {
+                                                    "down": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "button": {
+                                                            "shape": {
+                                                              "kind": "int",
+                                                              "min": 0
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    },
+                                                    "key_down": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "key": {
+                                                            "shape": {
+                                                              "kind": "text"
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    },
+                                                    "key_up": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "key": {
+                                                            "shape": {
+                                                              "kind": "text"
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    },
+                                                    "move": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "to": {
+                                                            "shape": {
+                                                              "fields": {
+                                                                "frame": {
+                                                                  "shape": {
+                                                                    "kind": "text"
+                                                                  }
+                                                                },
+                                                                "node": {
+                                                                  "presence": "optional",
+                                                                  "shape": {
+                                                                    "kind": "maybe",
+                                                                    "of": {
+                                                                      "kind": "text"
+                                                                    }
+                                                                  }
+                                                                },
+                                                                "x": {
+                                                                  "presence": "optional",
+                                                                  "shape": {
+                                                                    "kind": "maybe",
+                                                                    "of": {
+                                                                      "kind": "float"
+                                                                    }
+                                                                  }
+                                                                },
+                                                                "y": {
+                                                                  "presence": "optional",
+                                                                  "shape": {
+                                                                    "kind": "maybe",
+                                                                    "of": {
+                                                                      "kind": "float"
+                                                                    }
+                                                                  }
+                                                                }
+                                                              },
+                                                              "kind": "struct",
+                                                              "open": true
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    },
+                                                    "pause": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "ms": {
+                                                            "shape": {
+                                                              "kind": "int",
+                                                              "min": 0
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    },
+                                                    "scroll": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "delta_x": {
+                                                            "shape": {
+                                                              "kind": "float"
+                                                            }
+                                                          },
+                                                          "delta_y": {
+                                                            "shape": {
+                                                              "kind": "float"
+                                                            }
+                                                          },
+                                                          "to": {
+                                                            "shape": {
+                                                              "fields": {
+                                                                "frame": {
+                                                                  "shape": {
+                                                                    "kind": "text"
+                                                                  }
+                                                                },
+                                                                "node": {
+                                                                  "presence": "optional",
+                                                                  "shape": {
+                                                                    "kind": "maybe",
+                                                                    "of": {
+                                                                      "kind": "text"
+                                                                    }
+                                                                  }
+                                                                },
+                                                                "x": {
+                                                                  "presence": "optional",
+                                                                  "shape": {
+                                                                    "kind": "maybe",
+                                                                    "of": {
+                                                                      "kind": "float"
+                                                                    }
+                                                                  }
+                                                                },
+                                                                "y": {
+                                                                  "presence": "optional",
+                                                                  "shape": {
+                                                                    "kind": "maybe",
+                                                                    "of": {
+                                                                      "kind": "float"
+                                                                    }
+                                                                  }
+                                                                }
+                                                              },
+                                                              "kind": "struct",
+                                                              "open": true
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    },
+                                                    "up": {
+                                                      "payload": {
+                                                        "fields": {
+                                                          "button": {
+                                                            "shape": {
+                                                              "kind": "int",
+                                                              "min": 0
+                                                            }
+                                                          }
+                                                        },
+                                                        "kind": "struct",
+                                                        "open": true
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "kind": "struct",
+                                          "open": true
+                                        }
+                                      }
+                                    },
+                                    "takeover": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "bool"
+                                      }
+                                    }
+                                  },
+                                  "kind": "struct",
+                                  "open": true
+                                }
+                              }
+                            },
+                            "kind": "struct",
+                            "open": true
+                          }
+                        },
+                        "present": {
+                          "payload": {
+                            "fields": {
+                              "keep": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "bool"
+                                }
+                              },
+                              "present": {
+                                "shape": {
+                                  "fields": {
+                                    "fingerprint": {
+                                      "shape": {
+                                        "kind": "text"
+                                      }
+                                    },
+                                    "fixture": {
+                                      "shape": {
+                                        "kind": "enum",
+                                        "spelling": "inline",
+                                        "tag": "kind",
+                                        "variants": {
+                                          "patch": {
+                                            "payload": {
+                                              "fields": {
+                                                "patch": {
+                                                  "shape": {
+                                                    "kind": "any"
+                                                  }
+                                                }
+                                              },
+                                              "kind": "struct",
+                                              "open": true
+                                            }
+                                          },
+                                          "state": {
+                                            "payload": {
+                                              "fields": {
+                                                "state": {
+                                                  "shape": {
+                                                    "kind": "any"
+                                                  }
+                                                }
+                                              },
+                                              "kind": "struct",
+                                              "open": true
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "if_match": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "maybe",
+                                        "of": {
+                                          "kind": "text"
+                                        }
+                                      }
+                                    },
+                                    "mark": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "maybe",
+                                        "of": {
+                                          "kind": "bool"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "kind": "struct",
+                                  "open": true
+                                }
+                              }
+                            },
+                            "kind": "struct",
+                            "open": true
+                          }
+                        },
+                        "release": {}
+                      }
+                    }
+                  }
+                },
+                "kind": "struct",
+                "open": true
+              }
+            }
+          },
+          "scale": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "kind": "float"
+              }
+            }
+          },
+          "settle_ms": {
+            "shape": {
+              "kind": "int",
+              "min": 0
+            }
+          }
+        },
+        "kind": "struct",
+        "open": true
+      },
+      "answer": {
+        "kind": "enum",
+        "spelling": "keyed",
+        "variants": {
+          "cast": {
+            "payload": {
+              "fields": {
+                "clock": {
+                  "shape": {
+                    "kind": "enum",
+                    "spelling": "text",
+                    "variants": {
+                      "sampled": {},
+                      "stepped": {},
+                      "streamed": {}
+                    }
+                  }
+                },
+                "ended": {
+                  "shape": {
+                    "kind": "enum",
+                    "spelling": "inline",
+                    "tag": "kind",
+                    "variants": {
+                      "failed": {
+                        "payload": {
+                          "fields": {
+                            "refused": {
+                              "presence": "optional",
+                              "shape": {
+                                "kind": "maybe",
+                                "of": {
+                                  "fields": {
+                                    "code": {
+                                      "shape": {
+                                        "kind": "enum",
+                                        "spelling": "text",
+                                        "variants": {
+                                          "cannot_paint": {},
+                                          "capture_not_permitted": {},
+                                          "declined": {},
+                                          "duplicate_source": {},
+                                          "fixture_ended": {},
+                                          "mark_required": {},
+                                          "misfit_arguments": {},
+                                          "misfit_state": {},
+                                          "no_fixtures": {},
+                                          "no_history_interface": {},
+                                          "no_input_interface": {},
+                                          "no_screencast_interface": {},
+                                          "outside_frame": {},
+                                          "outside_grant": {},
+                                          "policy_refuses": {},
+                                          "showing_past": {},
+                                          "stale_head": {},
+                                          "takeover_not_granted": {},
+                                          "takeover_unheld": {},
+                                          "undeliverable_source": {},
+                                          "unknown_action": {},
+                                          "unknown_frame": {},
+                                          "unknown_key": {},
+                                          "unknown_node": {},
+                                          "unknown_position": {},
+                                          "unknown_screencast": {},
+                                          "unknown_source": {},
+                                          "unoffered_clock": {},
+                                          "unreadable_policy": {},
+                                          "unreadable_shape": {},
+                                          "wrong_fingerprint": {},
+                                          "wrong_source": {}
+                                        }
+                                      }
+                                    },
+                                    "subject": {
+                                      "presence": "optional",
+                                      "shape": {
+                                        "kind": "maybe",
+                                        "of": {
+                                          "kind": "text"
+                                        }
+                                      }
+                                    },
+                                    "why": {
+                                      "shape": {
+                                        "kind": "text"
+                                      }
+                                    }
+                                  },
+                                  "kind": "struct",
+                                  "open": true
+                                }
+                              }
+                            },
+                            "step": {
+                              "presence": "optional",
+                              "shape": {
+                                "kind": "maybe",
+                                "of": {
+                                  "kind": "int",
+                                  "min": 0
+                                }
+                              }
+                            },
+                            "why": {
+                              "shape": {
+                                "kind": "text"
+                              }
+                            }
+                          },
+                          "kind": "struct",
+                          "open": true
+                        }
+                      },
+                      "max_time": {},
+                      "settled": {}
+                    }
+                  }
+                },
+                "fps": {
+                  "shape": {
+                    "kind": "int",
+                    "min": 0
+                  }
+                },
+                "frame_count": {
+                  "shape": {
+                    "kind": "int",
+                    "min": 0
+                  }
+                },
+                "handle": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                },
+                "not_same": {
+                  "presence": "optional",
+                  "shape": {
+                    "kind": "list",
+                    "of": {
+                      "kind": "text"
+                    }
+                  }
+                },
+                "rows": {
+                  "shape": {
+                    "kind": "list",
+                    "of": {
+                      "fields": {
+                        "compose_us": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "int",
+                              "min": 0
+                            }
+                          }
+                        },
+                        "index": {
+                          "shape": {
+                            "kind": "int",
+                            "min": 0
+                          }
+                        },
+                        "png_hash": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "text"
+                            }
+                          }
+                        },
+                        "presented_us": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "int",
+                              "min": 0
+                            }
+                          }
+                        },
+                        "shown": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "enum",
+                              "spelling": "inline",
+                              "tag": "kind",
+                              "variants": {
+                                "fixture": {
+                                  "payload": {
+                                    "fields": {
+                                      "handle": {
+                                        "shape": {
+                                          "kind": "text"
+                                        }
+                                      }
+                                    },
+                                    "kind": "struct",
+                                    "open": true
+                                  }
+                                },
+                                "live": {},
+                                "position": {
+                                  "payload": {
+                                    "fields": {
+                                      "position": {
+                                        "shape": {
+                                          "kind": "int",
+                                          "min": 0
+                                        }
+                                      }
+                                    },
+                                    "kind": "struct",
+                                    "open": true
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "state_hash": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "text"
+                            }
+                          }
+                        },
+                        "state_head": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "text"
+                            }
+                          }
+                        },
+                        "time_us": {
+                          "shape": {
+                            "kind": "int",
+                            "min": 0
+                          }
+                        },
+                        "unchanged": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "bool"
+                          }
+                        }
+                      },
+                      "kind": "struct",
+                      "open": true
+                    }
+                  }
+                },
+                "same_on_rerun": {
+                  "shape": {
+                    "kind": "bool"
+                  }
+                },
+                "trace_hash": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                },
+                "unstepped": {
+                  "presence": "optional",
+                  "shape": {
+                    "kind": "list",
+                    "of": {
+                      "kind": "text"
+                    }
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          },
+          "refused": {
+            "payload": {
+              "fields": {
+                "code": {
+                  "shape": {
+                    "kind": "enum",
+                    "spelling": "text",
+                    "variants": {
+                      "cannot_paint": {},
+                      "capture_not_permitted": {},
+                      "declined": {},
+                      "duplicate_source": {},
+                      "fixture_ended": {},
+                      "mark_required": {},
+                      "misfit_arguments": {},
+                      "misfit_state": {},
+                      "no_fixtures": {},
+                      "no_history_interface": {},
+                      "no_input_interface": {},
+                      "no_screencast_interface": {},
+                      "outside_frame": {},
+                      "outside_grant": {},
+                      "policy_refuses": {},
+                      "showing_past": {},
+                      "stale_head": {},
+                      "takeover_not_granted": {},
+                      "takeover_unheld": {},
+                      "undeliverable_source": {},
+                      "unknown_action": {},
+                      "unknown_frame": {},
+                      "unknown_key": {},
+                      "unknown_node": {},
+                      "unknown_position": {},
+                      "unknown_screencast": {},
+                      "unknown_source": {},
+                      "unoffered_clock": {},
+                      "unreadable_policy": {},
+                      "unreadable_shape": {},
+                      "wrong_fingerprint": {},
+                      "wrong_source": {}
+                    }
+                  }
+                },
+                "subject": {
+                  "presence": "optional",
+                  "shape": {
+                    "kind": "maybe",
+                    "of": {
+                      "kind": "text"
+                    }
+                  }
+                },
+                "why": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          }
+        }
+      }
+    },
+    "ui/screencast.frames": {
+      "argument": {
+        "fields": {
+          "handle": {
+            "shape": {
+              "kind": "text"
+            }
+          },
+          "indices": {
+            "shape": {
+              "kind": "list",
+              "of": {
+                "kind": "int",
+                "min": 0
+              }
+            }
+          },
+          "parts": {
+            "shape": {
+              "kind": "list",
+              "of": {
+                "kind": "enum",
+                "spelling": "text",
+                "variants": {
+                  "animations": {},
+                  "capture": {},
+                  "layout": {},
+                  "state": {}
+                }
+              }
+            }
+          },
+          "region": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "fields": {
+                  "height": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "width": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "x": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  },
+                  "y": {
+                    "shape": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  }
+                },
+                "kind": "struct",
+                "open": true
+              }
+            }
+          },
+          "scale": {
+            "presence": "optional",
+            "shape": {
+              "kind": "maybe",
+              "of": {
+                "kind": "float"
+              }
+            }
+          }
+        },
+        "kind": "struct",
+        "open": true
+      },
+      "answer": {
+        "kind": "enum",
+        "spelling": "keyed",
+        "variants": {
+          "frames": {
+            "payload": {
+              "fields": {
+                "frames": {
+                  "shape": {
+                    "kind": "list",
+                    "of": {
+                      "fields": {
+                        "animations": {
+                          "presence": "optional",
+                          "shape": {
+                            "kind": "maybe",
+                            "of": {
+                              "kind": "list",
+                              "of": {
+                                "fields": {
+                                  "delay_ms": {
+                                    "shape": {
+                                      "kind": "float"
+                                    }
+                                  },
+                                  "duration_ms": {
+                                    "shape": {
+                                      "kind": "float"
+                                    }
+                                  },
+                                  "easing": {
+                                    "shape": {
+                                      "kind": "text"
+                                    }
+                                  },
+                                  "keyframes": {
+                                    "presence": "optional",
+                                    "shape": {
+                                      "kind": "any"
+                                    }
+                                  },
+                                  "property": {
+                                    "shape": {
+                                      "kind": "text"
+                                    }
+                                  },
+                                  "target": {
+                                    "shape": {
+                                      "kind": "text"
+                                    }
+                                  }
+                                },
+                                "kind": "struct",
+                                "open": true
+                              }
+                            }
+                          }
+                        },
+                        "index": {
+                          "shape": {
+                            "kind": "int",
+                            "min": 0
+                          }
+                        },
+                        "observation": {
+                          "shape": {
+                            "fields": {
+                              "capture": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "maybe",
+                                  "of": {
+                                    "fields": {
+                                      "height": {
+                                        "shape": {
+                                          "kind": "int",
+                                          "min": 0
+                                        }
+                                      },
+                                      "png": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "any"
+                                        }
+                                      },
+                                      "presented": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "bool"
+                                        }
+                                      },
+                                      "scale_factor": {
+                                        "shape": {
+                                          "kind": "float"
+                                        }
+                                      },
+                                      "width": {
+                                        "shape": {
+                                          "kind": "int",
+                                          "min": 0
+                                        }
+                                      }
+                                    },
+                                    "kind": "struct",
+                                    "open": true
+                                  }
+                                }
+                              },
+                              "frame": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "maybe",
+                                  "of": {
+                                    "kind": "text"
+                                  }
+                                }
+                              },
+                              "layout": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "maybe",
+                                  "of": {
+                                    "fields": {
+                                      "action": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "text"
+                                          }
+                                        }
+                                      },
+                                      "bounds": {
+                                        "shape": {
+                                          "fields": {
+                                            "height": {
+                                              "shape": {
+                                                "kind": "float"
+                                              }
+                                            },
+                                            "width": {
+                                              "shape": {
+                                                "kind": "float"
+                                              }
+                                            },
+                                            "x": {
+                                              "shape": {
+                                                "kind": "float"
+                                              }
+                                            },
+                                            "y": {
+                                              "shape": {
+                                                "kind": "float"
+                                              }
+                                            }
+                                          },
+                                          "kind": "struct",
+                                          "open": true
+                                        }
+                                      },
+                                      "children": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "list",
+                                          "of": {
+                                            "kind": "any"
+                                          }
+                                        }
+                                      },
+                                      "composition": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "text"
+                                          }
+                                        }
+                                      },
+                                      "enabled": {
+                                        "shape": {
+                                          "kind": "bool"
+                                        }
+                                      },
+                                      "focused": {
+                                        "shape": {
+                                          "kind": "bool"
+                                        }
+                                      },
+                                      "id": {
+                                        "shape": {
+                                          "kind": "text"
+                                        }
+                                      },
+                                      "interactive": {
+                                        "shape": {
+                                          "kind": "bool"
+                                        }
+                                      },
+                                      "label": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "text"
+                                          }
+                                        }
+                                      },
+                                      "laid_out": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "fields": {
+                                              "height": {
+                                                "shape": {
+                                                  "kind": "float"
+                                                }
+                                              },
+                                              "width": {
+                                                "shape": {
+                                                  "kind": "float"
+                                                }
+                                              },
+                                              "x": {
+                                                "shape": {
+                                                  "kind": "float"
+                                                }
+                                              },
+                                              "y": {
+                                                "shape": {
+                                                  "kind": "float"
+                                                }
+                                              }
+                                            },
+                                            "kind": "struct",
+                                            "open": true
+                                          }
+                                        }
+                                      },
+                                      "opacity": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "float"
+                                          }
+                                        }
+                                      },
+                                      "role": {
+                                        "shape": {
+                                          "kind": "text"
+                                        }
+                                      },
+                                      "source": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "text"
+                                          }
+                                        }
+                                      },
+                                      "value": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "text"
+                                          }
+                                        }
+                                      },
+                                      "visible": {
+                                        "shape": {
+                                          "kind": "bool"
+                                        }
+                                      }
+                                    },
+                                    "kind": "struct",
+                                    "open": true
+                                  }
+                                }
+                              },
+                              "refused": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "list",
+                                  "of": {
+                                    "fields": {
+                                      "code": {
+                                        "presence": "optional",
+                                        "shape": {
+                                          "kind": "maybe",
+                                          "of": {
+                                            "kind": "enum",
+                                            "spelling": "text",
+                                            "variants": {
+                                              "cannot_paint": {},
+                                              "capture_not_permitted": {},
+                                              "declined": {},
+                                              "duplicate_source": {},
+                                              "fixture_ended": {},
+                                              "mark_required": {},
+                                              "misfit_arguments": {},
+                                              "misfit_state": {},
+                                              "no_fixtures": {},
+                                              "no_history_interface": {},
+                                              "no_input_interface": {},
+                                              "no_screencast_interface": {},
+                                              "outside_frame": {},
+                                              "outside_grant": {},
+                                              "policy_refuses": {},
+                                              "showing_past": {},
+                                              "stale_head": {},
+                                              "takeover_not_granted": {},
+                                              "takeover_unheld": {},
+                                              "undeliverable_source": {},
+                                              "unknown_action": {},
+                                              "unknown_frame": {},
+                                              "unknown_key": {},
+                                              "unknown_node": {},
+                                              "unknown_position": {},
+                                              "unknown_screencast": {},
+                                              "unknown_source": {},
+                                              "unoffered_clock": {},
+                                              "unreadable_policy": {},
+                                              "unreadable_shape": {},
+                                              "wrong_fingerprint": {},
+                                              "wrong_source": {}
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "part": {
+                                        "shape": {
+                                          "kind": "enum",
+                                          "spelling": "text",
+                                          "variants": {
+                                            "capture": {},
+                                            "layout": {},
+                                            "state": {}
+                                          }
+                                        }
+                                      },
+                                      "why": {
+                                        "shape": {
+                                          "kind": "text"
+                                        }
+                                      }
+                                    },
+                                    "kind": "struct",
+                                    "open": true
+                                  }
+                                }
+                              },
+                              "shown": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "maybe",
+                                  "of": {
+                                    "kind": "enum",
+                                    "spelling": "inline",
+                                    "tag": "kind",
+                                    "variants": {
+                                      "fixture": {
+                                        "payload": {
+                                          "fields": {
+                                            "handle": {
+                                              "shape": {
+                                                "kind": "text"
+                                              }
+                                            }
+                                          },
+                                          "kind": "struct",
+                                          "open": true
+                                        }
+                                      },
+                                      "live": {},
+                                      "position": {
+                                        "payload": {
+                                          "fields": {
+                                            "position": {
+                                              "shape": {
+                                                "kind": "int",
+                                                "min": 0
+                                              }
+                                            }
+                                          },
+                                          "kind": "struct",
+                                          "open": true
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              "state": {
+                                "presence": "optional",
+                                "shape": {
+                                  "kind": "maybe",
+                                  "of": {
+                                    "fields": {
+                                      "fingerprint": {
+                                        "shape": {
+                                          "kind": "text"
+                                        }
+                                      },
+                                      "head": {
+                                        "shape": {
+                                          "kind": "text"
+                                        }
+                                      },
+                                      "value": {
+                                        "shape": {
+                                          "kind": "any"
+                                        }
+                                      }
+                                    },
+                                    "kind": "struct",
+                                    "open": true
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "struct",
+                            "open": true
+                          }
+                        }
+                      },
+                      "kind": "struct",
+                      "open": true
+                    }
+                  }
+                },
+                "next": {
+                  "presence": "optional",
+                  "shape": {
+                    "kind": "maybe",
+                    "of": {
+                      "kind": "int",
+                      "min": 0
+                    }
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          },
+          "refused": {
+            "payload": {
+              "fields": {
+                "code": {
+                  "shape": {
+                    "kind": "enum",
+                    "spelling": "text",
+                    "variants": {
+                      "cannot_paint": {},
+                      "capture_not_permitted": {},
+                      "declined": {},
+                      "duplicate_source": {},
+                      "fixture_ended": {},
+                      "mark_required": {},
+                      "misfit_arguments": {},
+                      "misfit_state": {},
+                      "no_fixtures": {},
+                      "no_history_interface": {},
+                      "no_input_interface": {},
+                      "no_screencast_interface": {},
+                      "outside_frame": {},
+                      "outside_grant": {},
+                      "policy_refuses": {},
+                      "showing_past": {},
+                      "stale_head": {},
+                      "takeover_not_granted": {},
+                      "takeover_unheld": {},
+                      "undeliverable_source": {},
+                      "unknown_action": {},
+                      "unknown_frame": {},
+                      "unknown_key": {},
+                      "unknown_node": {},
+                      "unknown_position": {},
+                      "unknown_screencast": {},
+                      "unknown_source": {},
+                      "unoffered_clock": {},
+                      "unreadable_policy": {},
+                      "unreadable_shape": {},
+                      "wrong_fingerprint": {},
+                      "wrong_source": {}
+                    }
+                  }
+                },
+                "subject": {
+                  "presence": "optional",
+                  "shape": {
+                    "kind": "maybe",
+                    "of": {
+                      "kind": "text"
+                    }
+                  }
+                },
+                "why": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          }
+        }
+      }
+    },
+    "ui/screencast.discard": {
+      "argument": {
+        "fields": {
+          "handle": {
+            "shape": {
+              "kind": "text"
+            }
+          }
+        },
+        "kind": "struct",
+        "open": true
+      },
+      "answer": {
+        "kind": "enum",
+        "spelling": "keyed",
+        "variants": {
+          "discarded": {
+            "payload": {
+              "fields": {
+                "handle": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          },
+          "refused": {
+            "payload": {
+              "fields": {
+                "code": {
+                  "shape": {
+                    "kind": "enum",
+                    "spelling": "text",
+                    "variants": {
+                      "cannot_paint": {},
+                      "capture_not_permitted": {},
+                      "declined": {},
+                      "duplicate_source": {},
+                      "fixture_ended": {},
+                      "mark_required": {},
+                      "misfit_arguments": {},
+                      "misfit_state": {},
+                      "no_fixtures": {},
+                      "no_history_interface": {},
+                      "no_input_interface": {},
+                      "no_screencast_interface": {},
+                      "outside_frame": {},
+                      "outside_grant": {},
+                      "policy_refuses": {},
+                      "showing_past": {},
+                      "stale_head": {},
+                      "takeover_not_granted": {},
+                      "takeover_unheld": {},
+                      "undeliverable_source": {},
+                      "unknown_action": {},
+                      "unknown_frame": {},
+                      "unknown_key": {},
+                      "unknown_node": {},
+                      "unknown_position": {},
+                      "unknown_screencast": {},
+                      "unknown_source": {},
+                      "unoffered_clock": {},
+                      "unreadable_policy": {},
+                      "unreadable_shape": {},
+                      "wrong_fingerprint": {},
+                      "wrong_source": {}
+                    }
+                  }
+                },
+                "subject": {
+                  "presence": "optional",
+                  "shape": {
+                    "kind": "maybe",
+                    "of": {
+                      "kind": "text"
+                    }
+                  }
+                },
+                "why": {
+                  "shape": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "kind": "struct",
+              "open": true
+            }
+          }
+        }
+      }
     }
   },
   "fingerprints": {
-    "ui/observe": "8295dcefa61695af",
-    "ui/act": "6058f1cd2a8a4d9d",
-    "ui/input": "ea51b70480a7bdc9",
-    "ui/history": "6b018751ab8e5e3d"
+    "ui/observe": "329cefc5d90f5d0a",
+    "ui/act": "45dc51850686b22b",
+    "ui/input": "3b2f7f0d8e251997",
+    "ui/history": "82adfd27c134e63e",
+    "ui/screencast": "a1381b0c71055a41"
   }
 }

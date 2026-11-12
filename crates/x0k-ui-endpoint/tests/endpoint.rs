@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use x0k_ui_endpoint::client::UiClient;
 use x0k_ui_endpoint::server::{serve_connection, serve_connection_from, Declinable, Endpoint, UiApp};
+use x0k_ui_endpoint::takeover::{HoldAnswer, HoldMatch, Requester, TakeoverPolicy};
 use x0k_ui_endpoint::{InvokeAnswer, PerformAnswer, ReleaseAnswer};
 use x0k_ui_protocol::act::{Grant, Invoke, Outcome};
 use x0k_ui_protocol::fixture::{Fixture, PresentAnswer, PresentCall, ReleaseCall};
@@ -14,7 +15,7 @@ use x0k_ui_protocol::history::{HistoryOffer, Shown};
 use x0k_ui_protocol::input::{HeldFrame, InputOffer, Perform, Resolved, Source, Step, Target};
 use x0k_ui_protocol::observe::{check_observation, Bounds, Capture, LayoutNode, Observation, ObserveCall, Part};
 use x0k_ui_protocol::observe::StatePart;
-use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY};
+use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY, UI_INPUT};
 use x0k_ui_protocol::replay::{Covers, PolicyEntry, ReplayDisposition};
 use x0k_ui_protocol::shapes::{interface, interfaces, shape_pin};
 use x0k_ui_protocol::RefusalCode;
@@ -37,6 +38,8 @@ struct Demo {
     delivers: Option<&'static [&'static str]>,
     /// Why it declines actions and input under a fixture, when it does.
     declines: Option<String>,
+    /// Why it declines input whatever it shows, when it does.
+    declines_input: Option<String>,
     /// The fixture it ended itself, and why.
     ended: Arc<Mutex<Option<(String, String)>>>,
     /// The one requester the person grants a takeover, when there is one.
@@ -45,6 +48,8 @@ struct Demo {
     asked: Arc<Mutex<Vec<String>>>,
     /// The name each sequence it ran gave its requester.
     names: Arc<Mutex<Vec<Option<String>>>>,
+    /// For whom it held the window without asking.
+    held_for: Arc<Mutex<Vec<String>>>,
 }
 
 impl Demo {
@@ -67,6 +72,7 @@ fn window() -> LayoutNode {
         enabled: true,
         focused: false,
         interactive: false,
+        opacity: None,
         action: None,
         source: None,
         composition: None,
@@ -97,6 +103,8 @@ impl UiApp for Demo {
             replay_policy: self.policy.clone(),
             sandboxes: Vec::new(),
             input: self.takes_over.map(|_| InputOffer { presents: false, takeover: true }),
+            dev_instance: false,
+            screencast: None,
         }
     }
 
@@ -141,6 +149,11 @@ impl UiApp for Demo {
         self.takes_over == Some(true) || self.grants_to == Some(requester)
     }
 
+    async fn hold_takeover(&self, requester: &str) -> bool {
+        self.held_for.lock().expect("the demo's lock").push(requester.to_string());
+        self.takes_over.is_some()
+    }
+
     async fn shown(&self) -> Shown {
         match self.fixture.lock().expect("the demo's lock").clone() {
             Some(handle) => Shown::Fixture { handle },
@@ -156,7 +169,7 @@ impl UiApp for Demo {
         Some(StatePart { value: json!({}), head: "s1".to_string(), fingerprint: shape_pin(&any_shape()) })
     }
 
-    async fn present(&self, _state: Value) -> PresentAnswer {
+    async fn present(&self, _state: Value, _marked: bool) -> PresentAnswer {
         *self.fixture.lock().expect("the demo's lock") = Some("x1".to_string());
         PresentAnswer::Presented { handle: "x1".to_string(), frame: Some("f4".to_string()) }
     }
@@ -171,6 +184,10 @@ impl UiApp for Demo {
 
     async fn declines(&self, _call: Declinable<'_>) -> Option<String> {
         self.declines.clone()
+    }
+
+    async fn declines_input(&self, _requester: &str, _perform: &Perform) -> Option<String> {
+        self.declines_input.clone()
     }
 
     async fn release(&self, handle: String) -> ReleaseAnswer {
@@ -220,7 +237,7 @@ async fn a_takeover_runs_only_when_the_person_grants_it_and_the_app_hears_who_as
         let demo = Demo { takes_over: Some(grants), ..Demo::default() };
         let (ours, theirs) = tokio::io::duplex(64 * 1024);
         let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
-        tokio::spawn(serve_connection_from(theirs, endpoint, "uid 501 pid 7".to_string()));
+        tokio::spawn(serve_connection_from(theirs, endpoint, Requester::peer(501, Some(7))));
         let client = UiClient::open(ours).await.expect("a session");
         let answer = client.perform(&Perform { takeover: true, ..click_at(1.0) }).await.expect("an answer");
         if grants {
@@ -340,7 +357,7 @@ async fn a_source_kind_the_host_does_not_deliver_is_refused_as_undeliverable_and
 async fn under_a_fixture(demo: Demo) -> (UiClient, Demo) {
     let (client, demo) = driven_as(demo, Grant { classes: vec![SideEffect::NonIdempotent] }).await;
     let fixture = Fixture::Patch { patch: json!({}) };
-    let call = PresentCall { fixture, fingerprint: shape_pin(&any_shape()), if_match: Some("s1".to_string()) };
+    let call = PresentCall { fixture, fingerprint: shape_pin(&any_shape()), if_match: Some("s1".to_string()), mark: None };
     let presented = client.present(&call).await.expect("an answer");
     assert!(matches!(presented, PresentAnswer::Presented { .. }), "{presented:?}");
     (client, demo)
@@ -377,6 +394,19 @@ async fn under_a_fixture_an_action_and_input_the_app_declines_are_refused_as_dec
     assert!(demo.performed.lock().expect("the lock").is_empty(), "declined input ran");
 }
 
+#[tokio::test]
+async fn a_sequence_the_app_declines_whatever_it_shows_is_refused_as_declined_and_never_runs() {
+    let declining = Demo { declines_input: Some("the person is using the window".to_string()), ..Demo::default() };
+    let (live, demo) = driven_as(declining, Grant { classes: vec![SideEffect::NonIdempotent] }).await;
+    let PerformAnswer::Refused(refused) = live.perform(&click_at(5.0)).await.expect("an answer") else {
+        panic!("the sequence ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref(), refused.why.as_str()), (RefusalCode::Declined, Some("ui/input"), "the person is using the window"));
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "declined input ran");
+    let invoke = Invoke { action: "chat.send".to_string(), args: json!({"text": "hi"}) };
+    assert!(matches!(live.invoke(&invoke).await.expect("an answer"), InvokeAnswer::Done { .. }), "an action is not input");
+}
+
 /// Why the demo ends its fixture.
 const ARRIVED: &str = "an approval arrived for a person";
 
@@ -411,7 +441,7 @@ async fn only_the_session_that_presented_a_fixture_the_app_ended_hears_it_ended(
     let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
     let (presenter, other) = (session(&endpoint).await, session(&endpoint).await);
     let fixture = Fixture::Patch { patch: json!({}) };
-    let call = PresentCall { fixture, fingerprint: shape_pin(&any_shape()), if_match: None };
+    let call = PresentCall { fixture, fingerprint: shape_pin(&any_shape()), if_match: None, mark: None };
     assert!(matches!(presenter.present(&call).await.expect("an answer"), PresentAnswer::Presented { .. }));
     demo.end_fixture(ARRIVED);
     let answer = other.perform(&click_at(5.0)).await.expect("an answer");
@@ -423,12 +453,91 @@ async fn only_the_session_that_presented_a_fixture_the_app_ended_hears_it_ended(
     assert_eq!(demo.performed.lock().expect("the lock").len(), 1, "the refused sequence ran");
 }
 
+/// A session with `demo` behind an endpoint configured by `policy`, its
+/// connection's requester `uid 501 pid 7`.
+async fn configured(demo: &Demo, policy: TakeoverPolicy) -> UiClient {
+    let (ours, theirs) = tokio::io::duplex(64 * 1024);
+    let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }).with_takeover(policy));
+    tokio::spawn(serve_connection_from(theirs, endpoint, Requester::peer(501, Some(7))));
+    UiClient::open(ours).await.expect("a session")
+}
+
+fn takeover_at(x: f64) -> Perform {
+    Perform { takeover: true, ..click_at(x) }
+}
+
+#[tokio::test]
+async fn a_takeover_the_configuration_refuses_is_refused_naming_it_and_no_one_is_asked() {
+    let demo = Demo { takes_over: Some(true), ..Demo::default() };
+    let client = configured(&demo, TakeoverPolicy::default().otherwise(HoldAnswer::Refuse)).await;
+    let PerformAnswer::Refused(refused) = client.perform(&takeover_at(1.0)).await.expect("an answer") else {
+        panic!("a refused takeover ran");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::TakeoverNotGranted, Some("uid 501 pid 7")));
+    assert!(refused.why.contains("configuration"), "the refusal names the configuration: {}", refused.why);
+    assert!(demo.asked.lock().expect("the lock").is_empty(), "the person was asked");
+    assert!(demo.held_for.lock().expect("the lock").is_empty(), "the window was held");
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "the sequence ran");
+}
+
+#[tokio::test]
+async fn a_takeover_the_configuration_allows_holds_without_asking() {
+    let demo = Demo { takes_over: Some(false), ..Demo::default() };
+    let rule = HoldMatch { uid: Some(501), ..HoldMatch::default() };
+    let client = configured(&demo, TakeoverPolicy::default().rule(rule, HoldAnswer::Allow)).await;
+    let answer = client.perform(&takeover_at(1.0)).await.expect("an answer");
+    assert!(matches!(answer, PerformAnswer::Done { .. }), "{answer:?}");
+    assert!(demo.asked.lock().expect("the lock").is_empty(), "the person was asked");
+    assert_eq!(*demo.held_for.lock().expect("the lock"), vec!["uid 501 pid 7".to_string()]);
+    let answer = client.perform(&takeover_at(2.0)).await.expect("an answer");
+    assert!(matches!(answer, PerformAnswer::Done { .. }), "the requester's next takeover holds again: {answer:?}");
+}
+
+#[tokio::test]
+async fn with_nothing_configured_a_takeover_asks_the_person() {
+    let demo = Demo { takes_over: Some(false), ..Demo::default() };
+    let client = configured(&demo, TakeoverPolicy::default()).await;
+    let PerformAnswer::Refused(refused) = client.perform(&takeover_at(1.0)).await.expect("an answer") else {
+        panic!("an unasked takeover ran");
+    };
+    assert_eq!(refused.code, RefusalCode::TakeoverNotGranted);
+    assert!(refused.why.contains("the person"), "{}", refused.why);
+    assert_eq!(*demo.asked.lock().expect("the lock"), vec!["uid 501 pid 7".to_string()]);
+    assert!(demo.held_for.lock().expect("the lock").is_empty(), "the window was held unasked");
+}
+
+#[tokio::test]
+async fn a_requester_name_cannot_make_a_rule_match() {
+    let demo = Demo { takes_over: Some(false), ..Demo::default() };
+    let named = HoldMatch { on_behalf_of: Some("Apollo".to_string()), ..HoldMatch::default() };
+    let client = configured(&demo, TakeoverPolicy::default().rule(named, HoldAnswer::Allow).otherwise(HoldAnswer::Refuse)).await;
+    let claims = Perform { requester_name: Some("Apollo".to_string()), ..takeover_at(1.0) };
+    let PerformAnswer::Refused(refused) = client.perform(&claims).await.expect("an answer") else {
+        panic!("a name the driver gave itself won a takeover");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::TakeoverNotGranted, Some("uid 501 pid 7")));
+    assert!(demo.held_for.lock().expect("the lock").is_empty(), "the window was held for a name");
+}
+
+#[tokio::test]
+async fn what_the_app_declines_for_now_is_declined_under_an_allow() {
+    let declines_input = Some("the person is using the window".to_string());
+    let demo = Demo { takes_over: Some(true), declines_input, ..Demo::default() };
+    let client = configured(&demo, TakeoverPolicy::default().otherwise(HoldAnswer::Allow)).await;
+    let PerformAnswer::Refused(refused) = client.perform(&takeover_at(1.0)).await.expect("an answer") else {
+        panic!("an allowed takeover ran past what the app declines");
+    };
+    assert_eq!((refused.code, refused.subject.as_deref()), (RefusalCode::Declined, Some(UI_INPUT)));
+    assert!(demo.held_for.lock().expect("the lock").is_empty(), "the window was held before the app declined");
+    assert!(demo.performed.lock().expect("the lock").is_empty(), "the sequence ran");
+}
+
 #[tokio::test]
 async fn a_requester_name_reaches_the_app_and_a_takeover_is_asked_for_the_connection_s_requester() {
     let demo = Demo { takes_over: Some(false), grants_to: Some("Apollo"), ..Demo::default() };
     let (ours, theirs) = tokio::io::duplex(64 * 1024);
     let endpoint = Arc::new(Endpoint::new(demo.clone(), Grant { classes: vec![] }));
-    tokio::spawn(serve_connection_from(theirs, endpoint, "uid 501 pid 7".to_string()));
+    tokio::spawn(serve_connection_from(theirs, endpoint, Requester::peer(501, Some(7))));
     let client = UiClient::open(ours).await.expect("a session");
     let named = Perform { requester_name: Some("Apollo".to_string()), ..click_at(1.0) };
     let answer = client.perform(&named).await.expect("an answer");
@@ -508,5 +617,5 @@ async fn a_connection_names_its_peer_as_its_requester() {
     use std::os::unix::fs::MetadataExt;
     let (ours, _theirs) = tokio::net::UnixStream::pair().expect("a socket pair");
     let uid = std::fs::metadata("/proc/self").expect("this process").uid();
-    assert_eq!(x0k_ui_endpoint::server::requester(&ours), format!("uid {uid} pid {}", std::process::id()));
+    assert_eq!(x0k_ui_endpoint::server::requester(&ours).to_string(), format!("uid {uid} pid {}", std::process::id()));
 }

@@ -1,0 +1,2900 @@
+{
+  "clause": "ui-screencast §2 to §4, §9; ui-interfaces §1",
+  "check": "screencast.cast",
+  "about": "What an endpoint does with a cast before anything plays. It needs ui/screencast in the grant and the offer, a frame rate of 1 to 240, a clock the offer lists (the best, stepped then streamed, when none is named; never sampled), a longest time and frame count within the offer's, steps in time order within the longest time, and each step's interface in the grant: invoke needs ui/act covering the action's class, perform ui/input, present and release ui/history. A present asking mark: false is refused as mark_required outside a dev instance. An offer without ui/screencast is no_screencast_interface, and a clock the offer does not list, or sampled, is unoffered_clock naming the clock. A step's own refusal is its operation's word; a frame rate, a bound or the order is misfit_arguments naming the field. The input is the offer, the interfaces the grant holds, ui/act's classes and the cast, whose date changes nothing here; the answer is {admitted: {clock, class, last_frame, step_frames}} or {refused}. A step at t ms first shows in frame ceil(t × fps / 1000).",
+  "vectors": [
+    {
+      "name": "a fixture sequence at 60 fps is admitted, its second present first shown in frame 6 (100 ms)",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "clock": "stepped",
+          "class": "idempotent_write",
+          "last_frame": 60,
+          "step_frames": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "the same sequence at 120 fps first shows its second present in frame 12",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 120,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "clock": "stepped",
+          "class": "idempotent_write",
+          "last_frame": 120,
+          "step_frames": [
+            0,
+            12
+          ]
+        }
+      }
+    },
+    {
+      "name": "a cast naming its start's date is admitted as the same cast without one",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ],
+          "date": 1794500000000
+        }
+      },
+      "expect": {
+        "admitted": {
+          "clock": "stepped",
+          "class": "idempotent_write",
+          "last_frame": 60,
+          "step_frames": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "a run with a perform step is refused under a grant that does not hold ui/input",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "perform",
+                "perform": {
+                  "sources": [
+                    {
+                      "id": "m",
+                      "kind": "mouse",
+                      "steps": [
+                        {
+                          "do": "pause",
+                          "ms": 50
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "outside_grant",
+          "subject": "ui/input"
+        }
+      }
+    },
+    {
+      "name": "a run with a perform step is admitted under a grant that holds ui/input, at the class of input",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "perform",
+                "perform": {
+                  "sources": [
+                    {
+                      "id": "m",
+                      "kind": "mouse",
+                      "steps": [
+                        {
+                          "do": "pause",
+                          "ms": 50
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "class": "non_idempotent",
+          "step_frames": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "a present step asking mark: false is refused as mark_required outside a dev instance",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10",
+                  "mark": false
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "mark_required",
+          "subject": "ui/history"
+        }
+      }
+    },
+    {
+      "name": "a present step asking mark: false is admitted in a dev instance",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          },
+          "dev_instance": true
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10",
+                  "mark": false
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "clock": "stepped"
+        }
+      }
+    },
+    {
+      "name": "a cast without ui/screencast in the grant is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "outside_grant",
+          "subject": "ui/screencast"
+        }
+      }
+    },
+    {
+      "name": "a cast to an offer that does not name ui/screencast is refused, naming it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "no_screencast_interface",
+          "subject": "ui/screencast"
+        }
+      }
+    },
+    {
+      "name": "a cast naming a clock the offer does not list is refused, naming the clock",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ],
+          "clock": "streamed"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unoffered_clock",
+          "subject": "streamed"
+        }
+      }
+    },
+    {
+      "name": "a cast naming sampled is refused, since no app offers it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ],
+          "clock": "sampled"
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unoffered_clock",
+          "subject": "sampled"
+        }
+      }
+    },
+    {
+      "name": "a cast asking for the best clock gets stepped where the offer lists it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "clock": "stepped",
+          "class": "idempotent_write"
+        }
+      }
+    },
+    {
+      "name": "a cast asking for the best clock gets streamed where the offer lists only streamed, and an empty run there reads only",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "clock": "streamed",
+          "class": "read_only"
+        }
+      }
+    },
+    {
+      "name": "a frame rate of 241 is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 241,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "fps"
+        }
+      }
+    },
+    {
+      "name": "a frame rate of 0 is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 0,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "fps"
+        }
+      }
+    },
+    {
+      "name": "a frame rate of 240 is admitted",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 240,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "step_frames": [
+            0,
+            24
+          ]
+        }
+      }
+    },
+    {
+      "name": "steps out of time order are refused, naming the later step",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "run/1"
+        }
+      }
+    },
+    {
+      "name": "a step past the longest time is refused, naming it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 99,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "run/1"
+        }
+      }
+    },
+    {
+      "name": "a cast past the offer's longest time is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 60001,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "max_ms"
+        }
+      }
+    },
+    {
+      "name": "a cast past the offer's longest screencast in frames is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 120,
+          "max_ms": 30000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "max_ms"
+        }
+      }
+    },
+    {
+      "name": "an invoke step whose class the grant does not cover is refused as ui/act refuses it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "invoke",
+                "invoke": {
+                  "action": "card.open",
+                  "args": {}
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "outside_grant",
+          "subject": "card.open"
+        }
+      }
+    },
+    {
+      "name": "an invoke step takes its action's class",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "invoke",
+                "invoke": {
+                  "action": "card.open",
+                  "args": {}
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "class": "idempotent_write"
+        }
+      }
+    },
+    {
+      "name": "an invoke step of an action the offer does not list is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "invoke",
+                "invoke": {
+                  "action": "card.close",
+                  "args": {}
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "unknown_action",
+          "subject": "card.close"
+        }
+      }
+    },
+    {
+      "name": "a release step with no present before it is refused",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "release"
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "misfit_arguments",
+          "subject": "run/0"
+        }
+      }
+    },
+    {
+      "name": "a present then a release is admitted",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 200,
+              "step": {
+                "do": "release"
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "admitted": {
+          "step_frames": [
+            0,
+            12
+          ]
+        }
+      }
+    },
+    {
+      "name": "a present step to an app that takes no fixtures is refused as present is",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": false
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        },
+        "holds": [
+          "ui/observe",
+          "ui/act",
+          "ui/input",
+          "ui/history",
+          "ui/screencast"
+        ],
+        "grant": {
+          "classes": [
+            "read_only",
+            "idempotent_write",
+            "non_idempotent"
+          ]
+        },
+        "cast": {
+          "run": [
+            {
+              "at_ms": 0,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 1
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            },
+            {
+              "at_ms": 100,
+              "step": {
+                "do": "present",
+                "present": {
+                  "fixture": {
+                    "kind": "state",
+                    "state": {
+                      "cards": 2
+                    }
+                  },
+                  "fingerprint": "53a0ce8ce5e01c10"
+                }
+              }
+            }
+          ],
+          "fps": 60,
+          "max_ms": 1000,
+          "settle_ms": 300,
+          "parts": [
+            "capture",
+            "state"
+          ]
+        }
+      },
+      "expect": {
+        "refused": {
+          "code": "no_fixtures",
+          "subject": "ui/history"
+        }
+      }
+    }
+  ]
+}

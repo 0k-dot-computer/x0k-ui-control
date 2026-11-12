@@ -21,8 +21,8 @@ const ROOT = (() => {
 })();
 const from = (path: string) => import(pathToFileURL(join(ROOT, path)).href);
 const HOSTS = 'substrate/apps/ui-control-page/tests/hosts';
-const { bgraImage, scratchEnv } = await from(`${HOSTS}/engine.ts`);
-const { DRAWN_INK, drawnApart, judge } = await from(`${HOSTS}/probe-judge.ts`);
+const { bgraImage, pngImage, scratchEnv } = await from(`${HOSTS}/engine.ts`);
+const { DRAWN_INK, FIXTURE_INK, drawnApart, judge } = await from(`${HOSTS}/probe-judge.ts`);
 const { UI_CONFORMANCE } = await from(`${HOSTS}/suite.ts`);
 const { display } = await from(`${HOSTS}/webkitgtk.ts`);
 const { ownedTempDir, spawnOwned } = await from('tools/owned-process.mjs');
@@ -57,15 +57,17 @@ function percentile(values: number[], p: number) {
   return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
 }
 
-const deadline = (what: string) => new Promise<never>((_, fail) =>
-  setTimeout(() => fail(new Error(`the probe app did not ${what} within ${ANSWER_MS} ms`)), ANSWER_MS).unref());
+const deadline = (what: string, ms = ANSWER_MS) => new Promise<never>((_, fail) =>
+  setTimeout(() => fail(new Error(`the probe app did not ${what} within ${ms} ms`)), ms).unref());
 
 /** The probe app, composited or not, showing `page`, and a call to it: on
  * Linux on an X server of its own at GDK's `gdkScale` widget scale, on macOS
  * on the Mac's display at its own backing scale. With `at`, the app gives the
  * plugin its endpoint's path, `given/probe.endpoint` in its runtime directory,
- * by `ui_plugin_at`. */
-async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.html', at = false) {
+ * by `ui_plugin_at`. With `takeover`, the host's takeover configuration is
+ * that table; without, every takeover asks. With `dev`, the app runs as a
+ * dev instance. */
+async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.html', at = false, takeover?: object, dev = false) {
   const home = ownedTempDir('x0k-ui-tauri-home-');
   const env = MAC ? scratchEnv(home) : scratchEnv(home, { LIBGL_ALWAYS_SOFTWARE: '1', NO_AT_BRIDGE: '1', GDK_BACKEND: 'x11', GDK_SCALE: String(gdkScale) });
   const stops: (() => Promise<void>)[] = [];
@@ -84,7 +86,9 @@ async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.h
     const accepted = new Promise<Socket>((done) => server.once('connection', done));
     await new Promise<void>((done) => server.listen(MAC ? address : `\0${address.slice(1)}`, done));
     const endpoint = at ? `${runtime}/given/probe.endpoint` : `${runtime}/ui-control/x0k-ui-tauri-probe.endpoint`;
-    const appEnv: NodeJS.ProcessEnv = { ...env, X0K_RUNTIME_DIR: runtime, ...(x ? { DISPLAY: x.name } : {}) };
+    const appEnv: NodeJS.ProcessEnv = { ...env, X0K_RUNTIME_DIR: runtime, ...(x ? { DISPLAY: x.name } : {}),
+      ...(takeover ? { X0K_UI_TAURI_PROBE_TAKEOVER: JSON.stringify(takeover) } : {}),
+      ...(dev ? { X0K_UI_TAURI_PROBE_DEV_INSTANCE: '1' } : {}) };
     delete appEnv.X0K_UI_CONTROL_ENDPOINT_DIR;
     const args = [PROBE, address, String(SIZE.width), String(SIZE.height), compositing ? 'ALWAYS' : 'NEVER', page, ...(at ? [endpoint] : [])];
     const app = x
@@ -94,12 +98,13 @@ async function probeApp(compositing: boolean, gdkScale = 1, page = 'probe-page.h
     const ended = new Promise<never>((_, fail) => app.once('exit', (code) => fail(new Error(`the probe app ended (${code})`))));
     const link = await Promise.race([accepted, ended, deadline('load the page')]);
     const lines = createInterface({ input: link })[Symbol.asyncIterator]();
-    const next = async () => JSON.parse((await Promise.race([lines.next(), ended, deadline('answer')])).value);
+    const next = async (within = ANSWER_MS) => JSON.parse((await Promise.race([lines.next(), ended, deadline('answer', within)])).value);
     const tauri = (await next()).ready;
     let last = 0;
-    const call = async (request: object) => {
+    /** The app's reply to `request`, waited for `within` ms. */
+    const call = async (request: object, within = ANSWER_MS) => {
       link.write(JSON.stringify({ id: ++last, ...request }) + '\n');
-      const reply = await next();
+      const reply = await next(within);
       if (reply.error) throw new Error(reply.error);
       return reply;
     };
@@ -137,6 +142,8 @@ const CONTROLS = `
   window.inputSeen = [];
   for (const type of ['click', 'focus', 'keydown', 'input', 'wheel'])
     document.addEventListener(type, (e) => inputSeen.push({ type, trusted: e.isTrusted, target: e.target.id || e.target.parentElement?.id }), { capture: true, passive: true });
+  for (const type of ['mousedown', 'mouseup', 'keydown', 'keyup', 'wheel'])
+    document.addEventListener(type, (e) => { if (e.isTrusted) window.__TAURI_INTERNALS__.invoke('probe_heard', { kind: type }); }, { capture: true, passive: true });
   return 'ok';`;
 
 /** The probe page with the controls, at GDK widget scale `gdkScale`, and its
@@ -297,18 +304,79 @@ for (const gdkScale of MAC ? [0] : [1, 2]) {
       await assert.rejects(perform([click(at), { id: 'finger', kind: 'touch', steps: [{ do: 'move', to: at }] }]), /a touch source cannot be delivered/);
       assert.deepEqual(await seen(), []);
     });
+
+    const told = async () => page.app.call({ op: 'told' });
+    const typing = (text: string) => ({ id: 'keys', kind: 'key', steps: [...text].flatMap((key) => [{ do: 'key_down', key }, { do: 'key_up', key }]) });
+
+    test('every event the plugin delivers is told to the host first, on the main thread, so a page handler\'s request finds it told', async () => {
+      const at = await centre('probe-field');
+      await told();
+      await perform([click(at)]);
+      await perform([typing('ok')]);
+      await sleep(300);
+      const { told: events, heard, lastIsLastTold } = await told();
+      await seen();
+      assert.deepEqual(events.map((e: any) => e.kind), ['move', 'press', 'release', 'key_down', 'key_up', 'key_down', 'key_up'], JSON.stringify(events));
+      assert.ok(events.every((e: any) => e.main && e.webview === 'probe' && e.requester === 'probe'), JSON.stringify(events));
+      assert.deepEqual([events[0].x, events[0].y].map(Math.round), [Math.round(at.x / page.widgetScale), Math.round(at.y / page.widgetScale)], JSON.stringify(events[0]));
+      assert.deepEqual(events.filter((e: any) => e.key).map((e: any) => e.key), ['o', 'o', 'k', 'k']);
+      assert.deepEqual(heard.map((h: any) => h.kind).sort(), ['keydown', 'keydown', 'keyup', 'keyup', 'mousedown', 'mouseup'], JSON.stringify(heard));
+      assert.ok(heard.every((h: any, n: number) => h.told >= n + 2 && h.last), JSON.stringify(heard));
+      assert.ok(lastIsLastTold, 'last_delivered answers the instant of the last event told');
+    });
+
+    if (!MAC) test('an app-level GDK event handler is called with none of the plugin\'s events, and with an event on GDK\'s queue', async (t) => {
+      await told();
+      await perform([click(await centre('probe-field'))]);
+      await perform([typing('a')]);
+      await sleep(300);
+      const { hooks } = await told();
+      await seen();
+      const by = (hooks: any[], hook: string) => hooks.filter((h) => h.hook === hook).map((h) => h.kind);
+      t.diagnostic(`gdk event handler ${JSON.stringify(by(hooks, 'gdk event handler'))}, key snooper ${JSON.stringify(by(hooks, 'key snooper'))}, toplevel event ${JSON.stringify(by(hooks, 'toplevel event'))}`);
+      assert.deepEqual(by(hooks, 'gdk event handler'), [], JSON.stringify(hooks));
+      const real = await page.app.call({ op: 'real' });
+      const queued = (await told()).hooks.filter((h: any) => h.hook === 'gdk event handler');
+      assert.deepEqual(queued.map((h: any) => [h.kind, h.time]), [['KeyPress', real.time], ['KeyRelease', real.time]], JSON.stringify(queued));
+    });
+
+    if (MAC) test('an AppKit local event monitor sees none of the plugin\'s pointer events, only key downs WebKit hands back, and an event sent through NSApplication', async (t) => {
+      await told();
+      await perform([click(await centre('probe-field'))]);
+      await perform([typing('ok')]);
+      await perform([click(await centre('probe-button'))]);
+      await perform([typing('x')]);
+      await sleep(300);
+      const { told: events, hooks } = await told();
+      await seen();
+      const times = new Set(events.map((e: any) => e.time));
+      const monitored = hooks.filter((h: any) => h.hook === 'local monitor');
+      const ours = monitored.filter((h: any) => times.has(h.time));
+      t.diagnostic(`the monitor saw ${monitored.length} events, ${ours.length} of them the plugin's: ${JSON.stringify(ours.map((h: any) => h.kind))}`);
+      assert.ok(ours.every((h: any) => h.kind === 'KeyDown'), JSON.stringify(ours));
+      const real = await page.app.call({ op: 'real' });
+      const sent = (await told()).hooks.filter((h: any) => h.hook === 'local monitor' && h.time === real.time);
+      assert.deepEqual(sent.map((h: any) => h.kind), ['MouseMoved'], JSON.stringify(sent));
+    });
   });
 }
 
 /** The caller's action the suite runs, beside the ones it draws from the offer. */
 const ACT = ['counter.bump', '{"by":1}'];
+/** The suite's screencast claims, which play no screencast. */
+const SCREENCAST_CLAIMS = ['the offer says how the app keeps time for a screencast exactly when it names ui/screencast, and never offers sampled',
+  'a present asking mark: false of an instance that is not a dev instance is refused as mark_required',
+  'a cast naming the sampled clock is refused as unoffered_clock before anything plays',
+  'frames for a handle the endpoint never cast is refused as unknown_screencast'];
 /** Claims of the suite's report the plugin must hold, beside its verdict. */
 const ENDPOINT_CLAIMS = ['an action the offer does not list is refused', 'counter.bump runs and names the frame after it',
   'a pointer move to a layout node runs and names the frame after it', 'a click at the watchable pace answers no sooner than its floor',
   'presenting a fixture shows it and names its frame', 'an observation names the fixture it shows',
   'an action above read_only takes the disposition the replay policy gives it, and a non_idempotent one is never performed',
   'releasing a fixture shows the live state', 'a fixture never changes the live state: presenting and releasing leaves its head where it was',
-  'a session\'s end releases the fixture it presented'];
+  'a session\'s end releases the fixture it presented',
+  'a present asking mark: false of an instance that is not a dev instance is refused as mark_required',
+  'while a fixture stands, a capture with the host\'s drawing shows the fixture mark, and the frame alone does not', ...SCREENCAST_CLAIMS];
 /** What wraps the library's run, so the page records each action it runs. */
 const HEARING = `const run = globalThis.__x0kUi.run;
   window.heard = [];
@@ -316,9 +384,10 @@ const HEARING = `const run = globalThis.__x0kUi.run;
   return 'ok';`;
 
 /** The suite's report on the endpoint at `socket`, and whether every claim
- * held, within `timeout` ms when one is given. */
-function conformance(socket: string, act: string[], timeout = 0): Promise<{ held: boolean; report: string }> {
-  return new Promise((done, fail) => execFile(UI_CONFORMANCE, [socket, ...act], { maxBuffer: 1 << 24, timeout }, (e, stdout, stderr) => {
+ * held, within `timeout` ms when one is given, the runner's `options` before
+ * the target. */
+function conformance(socket: string, act: string[], timeout = 0, options: string[] = []): Promise<{ held: boolean; report: string }> {
+  return new Promise((done, fail) => execFile(UI_CONFORMANCE, [...options, socket, ...act], { maxBuffer: 1 << 24, timeout }, (e, stdout, stderr) => {
     if (e && e.code !== 1) fail(new Error(`${UI_CONFORMANCE} could not judge the app${e.killed ? ` within ${timeout} ms` : ''}: ${stderr || e.message}`));
     else done({ held: !e, report: stdout });
   }));
@@ -339,7 +408,8 @@ describe('the answer page in a Tauri app, over its endpoint', () => {
   test('the app holds to the conformance suite over its endpoint', (t) => {
     t.diagnostic(run.report.trim());
     assert.ok(run.held, run.report);
-    for (const claim of ENDPOINT_CLAIMS) assert.match(run.report, new RegExp(`holds +(ui-interfaces )?§\\S+ ${claim}`), run.report);
+    for (const claim of ENDPOINT_CLAIMS) assert.match(run.report, new RegExp(`holds +(ui-\\S+ )?§\\S+ ${claim}`), run.report);
+    t.diagnostic(run.report.split('\n').filter((line) => SCREENCAST_CLAIMS.some((claim) => line.includes(claim))).join('\n'));
   });
   test('a call the offer does not list never reaches the page', async () => {
     const declared = JSON.parse((await app.call({ op: 'eval', body: 'return JSON.stringify(globalThis.__x0kUi.declared());' })).value);
@@ -444,6 +514,49 @@ describe('the answer page in a Tauri app whose window is hidden, or that decline
   });
 });
 
+describe('a Tauri app whose host declines or holds a driver\'s input, over its endpoint', () => {
+  let app: Awaited<ReturnType<typeof probeApp>>;
+  before(async () => {
+    app = await probeApp(false, 1, 'answer-page.html');
+    for (let waited = 0; !existsSync(app.endpoint) && waited < ANSWER_MS; waited += 50) await sleep(50);
+  });
+  after(async () => { await app?.close(); });
+  /** A Shift key held for 250 ms. */
+  const HELD_MS = 250;
+  const shift = { sources: [{ id: 'keys', kind: 'key', steps: [{ do: 'key_down', key: 'Shift' }, { do: 'pause', ms: HELD_MS }, { do: 'key_up', key: 'Shift' }] }] };
+  const driven = async (turn: object) => {
+    await app.call({ op: 'turn', ...turn });
+    await app.call({ op: 'told' });
+    const answered = await app.call({ op: 'endpoint', call: 'perform', argument: shift });
+    const { told } = await app.call({ op: 'told' });
+    await app.call({ op: 'turn', turn: 'run' });
+    if (answered.fault) throw new Error(answered.fault);
+    return { answer: answered.answer, ms: answered.ms as number, told };
+  };
+
+  test('a sequence the host declines is refused as declined with its reason, and none of it is delivered', async () => {
+    const why = 'the person is using the window';
+    const { answer, told } = await driven({ turn: 'decline', why });
+    assert.deepEqual([answer.refused?.code, answer.refused?.subject, answer.refused?.why], ['declined', 'ui/input', why], JSON.stringify(answer));
+    assert.deepEqual(told, []);
+  });
+  test('a sequence the host holds runs once the host lets it go, whole and with its own pause', async (t) => {
+    const { answer, ms, told } = await driven({ turn: 'wait', within_ms: 5000, why: 'held too long', resume_after_ms: 400 });
+    t.diagnostic(`answered in ${ms.toFixed(0)} ms; told ${JSON.stringify(told.map((e: any) => [e.kind, e.key, e.time]))}`);
+    assert.ok(answer.done, JSON.stringify(answer));
+    assert.ok(ms >= 400 + HELD_MS, `answered in ${ms.toFixed(0)} ms`);
+    assert.deepEqual(told.map((e: any) => [e.kind, e.key]), [['key_down', 'Shift'], ['key_up', 'Shift']], JSON.stringify(told));
+    assert.ok(told[1].time - told[0].time >= HELD_MS, `the pause held ${told[1].time - told[0].time} ms`);
+  });
+  test('a sequence the host holds past its wait is refused as declined with its reason, and none of it is delivered', async () => {
+    const why = 'the person kept typing';
+    const { answer, ms, told } = await driven({ turn: 'wait', within_ms: 300, why });
+    assert.deepEqual([answer.refused?.code, answer.refused?.subject, answer.refused?.why], ['declined', 'ui/input', why], JSON.stringify(answer));
+    assert.ok(ms >= 300, `refused in ${ms.toFixed(0)} ms`);
+    assert.deepEqual(told, []);
+  });
+});
+
 describe('a Tauri app that gives the plugin its endpoint\'s path', () => {
   let app: Awaited<ReturnType<typeof probeApp>>;
   before(async () => {
@@ -458,5 +571,412 @@ describe('a Tauri app that gives the plugin its endpoint\'s path', () => {
     assert.equal(answered.fault, undefined, JSON.stringify(answered));
     assert.ok(answered.answer.state, JSON.stringify(answered.answer));
     assert.deepEqual(readdirSync(app.runtime).filter((name) => name !== 'test.sock'), ['given'], 'what the runtime directory holds');
+  });
+});
+
+/** How long the person has to answer a takeover's ask: the protocol's `TAKEOVER_ASK_MS`. */
+const TAKEOVER_ASK_MS = 30_000;
+/** The suite's claim of a configured takeover. */
+const CONFIGURED_TAKEOVER = 'a takeover is answered as the host\'s configuration says, before any of the sequence runs';
+
+/** A sequence that takes over the window for `ms` and delivers nothing. */
+const holding = (ms: number) => ({ takeover: true, sources: [{ id: 'keys', kind: 'key', steps: [{ do: 'pause', ms }] }] });
+const inkAt = (capture: Image, x: number, y: number) => {
+  const [r, g, b] = capture.rgb(Math.round(x), Math.round(y));
+  return r === DRAWN_INK[0] && g === DRAWN_INK[1] && b === DRAWN_INK[2];
+};
+
+/** The answer page with the input test's controls, its host configured by
+ * `takeover`, and how many of the webview's units a CSS pixel is. */
+async function takeoverApp(takeover?: object) {
+  const app = await probeApp(false, 1, 'answer-page.html', false, takeover);
+  await app.call({ op: 'eval', body: CONTROLS });
+  for (let waited = 0; !existsSync(app.endpoint) && waited < ANSWER_MS; waited += 50) await sleep(50);
+  const snap = await app.call({ op: 'snap' });
+  const css = Number((await app.call({ op: 'eval', body: 'return String(window.innerWidth);' })).value);
+  const evaluate = async (body: string) => JSON.parse((await app.call({ op: 'eval', body })).value);
+  const drawn = async (frame_only: boolean) => image((await app.call({ op: 'drawn', frame_only })).capture);
+  /** A driver's call to the endpoint, answered, or started when `detach`. */
+  const driven = async (call: string, argument: object, detach = false) => app.call({ op: 'endpoint', call, argument, detach });
+  return { app, units: snap.width / snap.scale / css, captureScale: snap.width / css, evaluate, drawn, driven };
+}
+
+if (!MAC) describe('a Tauri app whose host allows a takeover, over its endpoint', () => {
+  let t0: Awaited<ReturnType<typeof takeoverApp>>;
+  before(async () => { t0 = await takeoverApp({ default: 'allow' }); });
+  after(async () => { await t0?.app.close(); });
+  const field = async () => (await t0.evaluate(`return JSON.stringify(document.getElementById('probe-field').value);`)) as string;
+  const clicks = async () => (await t0.evaluate('return JSON.stringify(inputSeen.splice(0));')).filter((e: any) => e.type === 'click');
+  const focused = async () => t0.evaluate(`const f = document.getElementById('probe-field'); f.value = ''; f.focus(); return JSON.stringify(document.activeElement.id);`);
+  /** The probe button's centre, in the webview's units. */
+  const button = async () => {
+    const box = await t0.evaluate(`const r = document.getElementById('probe-button').getBoundingClientRect(); return JSON.stringify([r.left + r.width / 2, r.top + r.height / 2]);`);
+    return [box[0] * t0.units, box[1] * t0.units];
+  };
+  /** Whether a capture shows the hold's band at the page's left edge. */
+  const band = (capture: Image) => inkAt(capture, 2 * t0.captureScale, 150 * t0.captureScale);
+
+  test('under allow, a takeover holds with no ask, its notice is drawn, and the person\'s input waits until it ends', async (t) => {
+    assert.equal(await focused(), 'probe-field');
+    await t0.app.call({ op: 'person', key: 'p' });
+    assert.equal(await field(), 'p', 'the person\'s key before any takeover');
+    await clicks();
+    const { detached } = await t0.driven('perform', holding(1500), true);
+    await sleep(400);
+    const [shown, alone] = [await t0.drawn(false), await t0.drawn(true)];
+    await t0.app.call({ op: 'person', key: 'q' });
+    await t0.app.call({ op: 'person', click: await button() });
+    const during = { field: await field(), clicks: await clicks() };
+    const joined = await t0.app.call({ op: 'join', detached });
+    await t0.app.call({ op: 'person', key: 'r' });
+    t.diagnostic(`answered in ${joined.ms?.toFixed(0)} ms; during the hold the field read ${JSON.stringify(during.field)}, ${during.clicks.length} clicks`);
+    assert.ok(joined.answer?.done, JSON.stringify(joined));
+    assert.ok(joined.ms >= 1500 && joined.ms < TAKEOVER_ASK_MS, `answered in ${joined.ms} ms`);
+    assert.ok(band(shown), 'a capture during the hold shows no band');
+    assert.ok(!band(alone), 'the frame alone shows the band');
+    assert.deepEqual(during, { field: 'p', clicks: [] }, 'the person\'s input reached the page during the hold');
+    assert.equal(await field(), 'pr', 'the person\'s key after the hold');
+  });
+  test('under allow, the person\'s Escape ends the hold at once', async () => {
+    await focused();
+    const { detached } = await t0.driven('perform', holding(2500), true);
+    await sleep(400);
+    assert.ok(band(await t0.drawn(false)), 'no hold to end');
+    await t0.app.call({ op: 'person', key: 'Escape' });
+    await t0.app.call({ op: 'person', key: 's' });
+    const after = { field: await field(), band: band(await t0.drawn(false)) };
+    const joined = await t0.app.call({ op: 'join', detached });
+    assert.ok(joined.answer?.done && joined.ms >= 2500, JSON.stringify(joined));
+    assert.deepEqual(after, { field: 's', band: false }, 'the hold stood after the person\'s Escape');
+  });
+  test('under allow, a sequence the host declines is refused as declined, and no hold stands', async () => {
+    await focused();
+    const why = 'the person is using the window';
+    await t0.app.call({ op: 'turn', turn: 'decline', why });
+    const declined = await t0.driven('perform', holding(100));
+    await t0.app.call({ op: 'turn', turn: 'run' });
+    await t0.app.call({ op: 'person', key: 'd' });
+    const refused = declined.answer?.refused;
+    assert.deepEqual([refused?.code, refused?.subject, refused?.why], ['declined', 'ui/input', why], JSON.stringify(declined));
+    assert.equal(await field(), 'd', 'a hold stood after a declined takeover');
+  });
+  test('under allow, the suite\'s configured-takeover claim holds', async (t) => {
+    const run = await conformance(t0.app.endpoint, ACT, 120_000, ['--takeover', 'allow']);
+    const line = run.report.split('\n').find((l) => l.includes(CONFIGURED_TAKEOVER));
+    t.diagnostic(`${line}; ${run.report.trim().split('\n').at(-1)}`);
+    assert.ok(run.held, run.report);
+    assert.match(line ?? '', /^ *holds +§10 /, run.report);
+  });
+});
+
+if (!MAC) describe('a Tauri app whose host refuses a takeover, over its endpoint', () => {
+  let t0: Awaited<ReturnType<typeof takeoverApp>>;
+  before(async () => { t0 = await takeoverApp({ default: 'refuse' }); });
+  after(async () => { await t0?.app.close(); });
+
+  test('under refuse, a takeover is refused as takeover_not_granted, naming the configuration, at once', async () => {
+    const answered = await t0.driven('perform', holding(100));
+    const refused = answered.answer?.refused;
+    assert.equal(refused?.code, 'takeover_not_granted', JSON.stringify(answered));
+    assert.match(refused?.why ?? '', /configuration refuses/, JSON.stringify(answered));
+    assert.ok(answered.ms < 1000, `refused in ${answered.ms} ms`);
+  });
+  test('under refuse, the suite\'s configured-takeover claim holds', async (t) => {
+    const run = await conformance(t0.app.endpoint, ACT, 120_000, ['--takeover', 'refuse']);
+    const line = run.report.split('\n').find((l) => l.includes(CONFIGURED_TAKEOVER));
+    t.diagnostic(`${line}; ${run.report.trim().split('\n').at(-1)}`);
+    assert.ok(run.held, run.report);
+    assert.match(line ?? '', /^ *holds +§10 /, run.report);
+  });
+});
+
+if (!MAC) describe('a Tauri app whose host asks the person for a takeover, over its endpoint', () => {
+  let t0: Awaited<ReturnType<typeof takeoverApp>>;
+  before(async () => { t0 = await takeoverApp(); });
+  after(async () => { await t0?.app.close(); });
+  /** The Allow button's centre in the webview's units, found by its ink in
+   * a capture: the rows where the ink runs between 60 and 150 capture
+   * pixels, which the card's border, wider, and its sides, narrower, are not. */
+  const allowButton = (capture: Image) => {
+    const rows: [number, number, number][] = [];
+    for (let y = 0; y < capture.height; y++) {
+      let run = 0;
+      for (let x = 0; x <= capture.width; x++) {
+        if (x < capture.width && inkAt(capture, x, y)) { run++; continue; }
+        if (run >= 60 * t0.captureScale / t0.units && run <= 150 * t0.captureScale / t0.units) rows.push([y, x - run, x]);
+        run = 0;
+      }
+    }
+    if (!rows.length) return undefined;
+    const [top, bottom] = [rows[0][0], rows[rows.length - 1][0]];
+    const scale = t0.captureScale / t0.units;
+    return [(rows[0][1] + rows[0][2]) / 2 / scale, (top + bottom) / 2 / scale];
+  };
+
+  test('under ask, the ask is drawn, and the person\'s click on Allow grants the takeover', async (t) => {
+    const { detached } = await t0.driven('perform', holding(300), true);
+    await sleep(500);
+    const at = allowButton(await t0.drawn(false));
+    t.diagnostic(`Allow found at ${JSON.stringify(at)} in the webview's units`);
+    assert.ok(at, 'no Allow button drawn');
+    await t0.app.call({ op: 'person', click: at });
+    const joined = await t0.app.call({ op: 'join', detached });
+    assert.ok(joined.answer?.done, JSON.stringify(joined));
+    assert.ok(joined.ms < TAKEOVER_ASK_MS, `granted in ${joined.ms} ms`);
+  });
+  test('under ask, the person\'s Escape refuses the takeover as takeover_not_granted', async () => {
+    const { detached } = await t0.driven('perform', holding(300), true);
+    await sleep(500);
+    await t0.app.call({ op: 'person', key: 'Escape' });
+    const joined = await t0.app.call({ op: 'join', detached });
+    assert.equal(joined.answer?.refused?.code, 'takeover_not_granted', JSON.stringify(joined));
+    assert.match(joined.answer.refused.why, /did not grant/, JSON.stringify(joined));
+    assert.ok(joined.ms < TAKEOVER_ASK_MS, `refused in ${joined.ms} ms`);
+  });
+  test('under ask, an ask no one answers is refused as takeover_not_granted after 30 s', async () => {
+    const { detached } = await t0.driven('perform', holding(100), true);
+    // The probe app answers each request within ANSWER_MS, which an ask's wait reaches.
+    await sleep(TAKEOVER_ASK_MS - 2000);
+    const joined = await t0.app.call({ op: 'join', detached });
+    assert.equal(joined.answer?.refused?.code, 'takeover_not_granted', JSON.stringify(joined));
+    assert.ok(joined.ms >= TAKEOVER_ASK_MS, `refused in ${joined.ms} ms`);
+  });
+});
+
+/** What makes the clock page take state fixtures: `going` starts its stage,
+ * as `go()` does, the first time a fixture sets it, and `ink` paints the ink
+ * patch blue. */
+const STAGE = `const live = { going: 0, ink: 0 };
+  let store = live;
+  const ink = document.createElement('div');
+  ink.style.cssText = 'position: absolute; left: 330px; top: 0; width: 40px; height: 40px; background: rgb(255, 255, 255)';
+  document.body.append(ink);
+  const show = (next) => {
+    const was = store.going;
+    store = next;
+    ink.style.background = store.ink ? 'rgb(0, 0, 255)' : 'rgb(255, 255, 255)';
+    if (store.going && !was) window.go();
+  };
+  const int = { shape: { kind: 'int' } };
+  globalThis.__x0kUi.install({ app: 'clock page', state: {
+    shape: { kind: 'struct', fields: { going: int, ink: int, date: int } },
+    read: () => ({ going: store.going, ink: store.ink, date: Date.now() }),
+    head: () => 'r0',
+    present: (state) => show({ going: state.going, ink: state.ink }),
+    release: () => show(live),
+  } });
+  return 'ok';`;
+/** Where the ink patch is, in CSS pixels. */
+const INK = [350, 20];
+/** How long the probe waits for a cast's answer. */
+const CAST_MS = 600_000;
+/** The date the dated casts name: 2026-11-12T00:00:00Z. */
+const CAST_DATE = 1_794_441_600_000;
+/** Whether the page's stepped clock steps. */
+const STEPPING = 'return String(globalThis.__x0kUiHold.steppedClock.time() !== null);';
+
+/** The clock page in the probe app, configured by `takeover`, taking fixtures. */
+async function clockApp(takeover: object) {
+  const app = await probeApp(false, 1, 'clock-page.html', false, takeover);
+  await app.call({ op: 'eval', body: STAGE });
+  for (let waited = 0; !existsSync(app.endpoint) && waited < ANSWER_MS; waited += 50) await sleep(50);
+  const observed = await app.call({ op: 'endpoint', call: 'observe', argument: { parts: ['state'] } });
+  const fingerprint = observed.answer.state.fingerprint;
+  const present = (at_ms: number, state: object) => ({ at_ms, step: { do: 'present', present: { fixture: { kind: 'state', state: { date: 0, ...state } }, fingerprint } } });
+  /** A cast of `run` at `fps` for `max_ms` from `date`, and the frames `indices` of it with their captures. */
+  const cast = async (run: object[], fps: number, max_ms: number, indices: number[] = [], date?: number) => {
+    const argument = { run, fps, max_ms, settle_ms: max_ms, clock: 'stepped', parts: ['capture', 'state'], presented: false, ...(date === undefined ? {} : { date }) };
+    const frames = indices.length ? { indices, parts: ['capture', 'state'] } : undefined;
+    return app.call({ op: 'endpoint', call: 'cast', argument, ...(frames ? { frames } : {}) }, CAST_MS);
+  };
+  return { app, present, cast };
+}
+
+/** The screencast a cast answered, or a failure naming what it answered instead. */
+const screencast = (answered: any) => {
+  if (!answered.answer?.cast) throw new Error(`no screencast: ${JSON.stringify(answered).slice(0, 2000)}`);
+  return answered.answer.cast;
+};
+/** The rows at which two screencasts' captures differ. */
+const rowsDiffer = (a: any[], b: any[]) => a.map((row, n) => (row.png_hash === b[n]?.png_hash ? -1 : n)).filter((n) => n >= 0);
+/** Whether a frame's capture shows the ink patch blue. */
+const inked = (frame: any) => {
+  const capture = pngImage(Buffer.from(frame.observation.capture.png));
+  const [r, g, b] = capture.rgb(INK[0], INK[1]);
+  return r === 0 && g === 0 && b === 255;
+};
+
+if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock over its endpoint', () => {
+  let t0: Awaited<ReturnType<typeof clockApp>>;
+  let first: any, second: any, fast: any, dated: any, redated: any;
+  const shownIn: Record<number, any> = {};
+  before(async () => {
+    t0 = await clockApp({ default: 'allow' });
+    const run = [t0.present(0, { going: 1, ink: 0 })];
+    first = await t0.cast(run, 30, 1000, [0]);
+    second = await t0.cast(run, 30, 1000);
+    dated = await t0.cast(run, 30, 1000, [0, 30], CAST_DATE);
+    redated = await t0.cast(run, 30, 1000, [], CAST_DATE);
+    fast = await t0.cast(run, 60, 1000);
+    for (const fps of [25, 60]) {
+      const at = Math.ceil((100 * fps) / 1000);
+      const inking = [t0.present(0, { going: 1, ink: 0 }), t0.present(100, { going: 1, ink: 1 })];
+      shownIn[fps] = { at, answered: await t0.cast(inking, fps, 200, [at - 1, at]) };
+    }
+  });
+  after(async () => { await t0?.app.close(); });
+
+  test('two casts of one run give the same trace hash, and the same capture in every frame', (t) => {
+    const [a, b] = [screencast(first), screencast(second)];
+    t.diagnostic(`${a.frame_count} frames at 30 fps in ${first.ms.toFixed(0)} and ${second.ms.toFixed(0)} ms of the wall; ended ${a.ended.kind}; same on rerun ${a.same_on_rerun} ${JSON.stringify(a.not_same)}; trace ${a.trace_hash.slice(0, 16)} and ${b.trace_hash.slice(0, 16)}`);
+    assert.equal(a.clock, 'stepped');
+    assert.equal(a.frame_count, 31, JSON.stringify(a.ended));
+    assert.ok(a.rows.every((row: any) => row.png_hash), 'a row without its capture');
+    assert.deepEqual(rowsDiffer(a.rows, b.rows), [], 'rows whose captures differ');
+    assert.equal(a.trace_hash, b.trace_hash);
+    const moved = a.rows.filter((row: any, n: number) => n > 0 && row.png_hash !== a.rows[n - 1].png_hash).length;
+    assert.ok(moved >= a.rows.length - 2, `${moved} frames changed of ${a.rows.length}: the run did not move`);
+  });
+  test('two casts from one date give one trace hash, and the page reads that date at frame 0 and a second on at frame 30', (t) => {
+    const [a, b, undated] = [screencast(dated), screencast(redated), screencast(first)];
+    const read = (answered: any) => answered.frames.frames.frames.map((frame: any) => [frame.index, frame.observation.state.value.date]);
+    t.diagnostic(`dated ${a.trace_hash.slice(0, 16)} and ${b.trace_hash.slice(0, 16)}; undated ${undated.trace_hash.slice(0, 16)}; read ${JSON.stringify(read(dated))}`);
+    assert.equal(a.frame_count, 31, JSON.stringify(a.ended));
+    assert.equal(a.trace_hash, b.trace_hash);
+    assert.deepEqual(read(dated), [[0, CAST_DATE], [30, CAST_DATE + 1000]]);
+    assert.deepEqual(read(first), [[0, 0]], 'a cast that names no date starts at the epoch');
+    assert.notEqual(a.trace_hash, undated.trace_hash, 'the date is in what the frames show');
+  });
+  test('frame n at 30 fps is frame 2n at 60 fps', (t) => {
+    const [slow, quick] = [screencast(first), screencast(fast)];
+    t.diagnostic(`${quick.frame_count} frames at 60 fps in ${fast.ms.toFixed(0)} ms of the wall`);
+    assert.deepEqual([slow.frame_count, quick.frame_count], [31, 61], JSON.stringify([slow.ended, quick.ended]));
+    const doubled = slow.rows.map((_: any, n: number) => quick.rows[2 * n]);
+    assert.deepEqual(rowsDiffer(slow.rows, doubled), [], 'frames n whose captures differ from frame 2n');
+  });
+  for (const fps of [25, 60]) {
+    test(`a present at 100 ms first shows in frame ceil(100 × ${fps} / 1000)`, () => {
+      const { at, answered } = shownIn[fps];
+      const cast = screencast(answered);
+      const [before, showing] = answered.frames.frames.frames;
+      assert.deepEqual([before.index, showing.index], [at - 1, at]);
+      assert.deepEqual([inked(before), inked(showing)], [false, true], `the ink in frames ${at - 1} and ${at}`);
+      assert.notEqual(cast.rows[at].shown.handle, cast.rows[at - 1].shown.handle, 'the frame names the fixture before');
+    });
+  }
+  test('after a cast the page\'s clock steps no more, and its animation frames run on the wall', async () => {
+    assert.equal((await t0.app.call({ op: 'eval', body: STEPPING })).value, 'false');
+    const ran = await t0.app.call({ op: 'eval', body: 'return String(await new Promise((done) => requestAnimationFrame(() => done(true))));' });
+    assert.equal(ran.value, 'true');
+  });
+});
+
+if (!MAC) describe('a Tauri app whose host refuses a stepped screencast\'s hold, over its endpoint', () => {
+  let t0: Awaited<ReturnType<typeof clockApp>>;
+  before(async () => { t0 = await clockApp({ default: 'allow', rules: [{ when: { hold: 'stepped_screencast' }, answer: 'refuse' }] }); });
+  after(async () => { await t0?.app.close(); });
+
+  test('a cast is refused as takeover_not_granted at once, naming the configuration, and the clock never begins', async () => {
+    const answered = await t0.cast([t0.present(0, { going: 1, ink: 0 })], 30, 1000);
+    const refused = answered.answer?.refused;
+    assert.equal(refused?.code, 'takeover_not_granted', JSON.stringify(answered));
+    assert.match(refused?.why ?? '', /configuration refuses/, JSON.stringify(answered));
+    assert.ok(answered.ms < 1000, `refused in ${answered.ms} ms`);
+    assert.equal((await t0.app.call({ op: 'eval', body: STEPPING })).value, 'false');
+  });
+  test('a sequence\'s takeover still holds under it', async () => {
+    const answered = await t0.app.call({ op: 'endpoint', call: 'perform', argument: holding(100) });
+    assert.ok(answered.answer?.done, JSON.stringify(answered));
+  });
+});
+
+/** How long a test's fixture stands: the session that presented it stays
+ * open this long. */
+const FIXTURE_HELD_MS = 2400;
+
+/** The answer page, its host a dev instance when `dev`, and what a test of the
+ * fixture mark asks of it. */
+async function fixtureMarkApp(dev: boolean) {
+  const app = await probeApp(false, 1, 'answer-page.html', false, undefined, dev);
+  for (let waited = 0; !existsSync(app.endpoint) && waited < ANSWER_MS; waited += 50) await sleep(50);
+  const snap = await app.call({ op: 'snap' });
+  const driven = async (call: string, argument: object) => (await app.call({ op: 'endpoint', call, argument })).answer;
+  const drawn = async (frame_only: boolean) => image((await app.call({ op: 'drawn', frame_only })).capture);
+  /** Whether a capture shows the fixture mark's band at the page's left
+   * edge, halfway down: the band is the protocol's 6 units wide. */
+  const band = (capture: Image) => {
+    const [r, g, b] = capture.rgb(Math.round(3 * snap.scale), Math.round(capture.height / 2));
+    return r === FIXTURE_INK[0] && g === FIXTURE_INK[1] && b === FIXTURE_INK[2];
+  };
+  /** A present asking `mark`, over a session kept open `hold_ms` after it
+   * answers, since a session's end releases the fixture it presented: its
+   * answer once that session ends, and with `hold_ms` given, the call is
+   * detached and `join` answers it. */
+  const present = async (mark?: boolean, hold_ms = 0) => {
+    const live = (await driven('observe', { parts: ['state'] })).state;
+    const argument = { fixture: { kind: 'patch', patch: {} }, fingerprint: live.fingerprint, ...(mark === undefined ? {} : { mark }) };
+    if (!hold_ms) return driven('present', argument);
+    const { detached } = await app.call({ op: 'endpoint', call: 'present', argument, hold_ms, detach: true });
+    return { join: async () => (await app.call({ op: 'join', detached })).answer };
+  };
+  /** What the app shows, as an observation over a session of its own names it. */
+  const shown = async () => (await driven('observe', { parts: [] })).shown;
+  /** Whether the endpoint's own capture says it carries the host's drawing. */
+  const presented = async (frame_only: boolean) => (await driven('observe', { parts: ['capture'], frame_only })).capture?.presented;
+  return { app, driven, drawn, band, present, presented, shown };
+}
+
+if (!MAC) describe('the fixture mark, drawn by a Tauri app\'s host', () => {
+  let t0: Awaited<ReturnType<typeof fixtureMarkApp>>;
+  before(async () => { t0 = await fixtureMarkApp(false); });
+  after(async () => { await t0?.app.close(); });
+
+  test('while a fixture stands, a capture with the host\'s drawing shows the mark and the frame alone does not', async (t) => {
+    const presenting = await t0.present(undefined, FIXTURE_HELD_MS) as { join: () => Promise<any> };
+    await sleep(FIXTURE_HELD_MS / 3);
+    const standing = await t0.shown();
+    const [shown, alone] = [await t0.drawn(false), await t0.drawn(true)];
+    const flags = [await t0.presented(false), await t0.presented(true)];
+    const presented = await presenting.join();
+    await sleep(300);
+    const after = await t0.drawn(false);
+    t.diagnostic(`band: drawn ${t0.band(shown)}, frame alone ${t0.band(alone)}, after its session ended ${t0.band(after)}; presented ${flags}; shown ${JSON.stringify(standing)}`);
+    assert.ok(presented?.presented?.handle, JSON.stringify(presented));
+    assert.equal(standing?.kind, 'fixture', JSON.stringify(standing));
+    assert.ok(t0.band(shown), 'a capture with the host\'s drawing showed no fixture mark');
+    assert.ok(!t0.band(alone), 'the frame alone showed the fixture mark');
+    assert.deepEqual(flags, [true, false], 'the endpoint\'s captures said wrongly whether they carry the drawing');
+    assert.ok(!t0.band(after), 'the fixture mark outlived its fixture, released at its session\'s end');
+  });
+  test('outside a dev instance, a present asking mark: false is refused as mark_required, and nothing is shown', async () => {
+    const answer = await t0.present(false);
+    assert.deepEqual([answer?.refused?.code, answer?.refused?.subject], ['mark_required', 'ui/history'], JSON.stringify(answer));
+    const shown = (await t0.driven('observe', { parts: [] })).shown;
+    assert.deepEqual(shown, { kind: 'live' }, JSON.stringify(shown));
+  });
+});
+
+if (!MAC) describe('the fixture mark, in a Tauri app that runs as a dev instance', () => {
+  let t0: Awaited<ReturnType<typeof fixtureMarkApp>>;
+  before(async () => { t0 = await fixtureMarkApp(true); });
+  after(async () => { await t0?.app.close(); });
+
+  test('a dev instance honours mark: false: the fixture stands, and no capture shows the mark', async (t) => {
+    const presenting = await t0.present(false, FIXTURE_HELD_MS) as { join: () => Promise<any> };
+    await sleep(FIXTURE_HELD_MS / 3);
+    const [standing, shown] = [await t0.shown(), await t0.drawn(false)];
+    const answer = await presenting.join();
+    t.diagnostic(`band: drawn ${t0.band(shown)}; shown ${JSON.stringify(standing)}`);
+    assert.ok(answer?.presented?.handle, JSON.stringify(answer));
+    assert.deepEqual(standing, { kind: 'fixture', handle: answer.presented.handle }, 'the fixture did not stand');
+    assert.ok(!t0.band(shown), 'a fixture presented with mark: false was marked');
+  });
+  test('a dev instance still marks a fixture whose present leaves the mark on', async () => {
+    const presenting = await t0.present(undefined, FIXTURE_HELD_MS) as { join: () => Promise<any> };
+    await sleep(FIXTURE_HELD_MS / 3);
+    const shown = await t0.drawn(false);
+    const answer = await presenting.join();
+    assert.ok(answer?.presented?.handle, JSON.stringify(answer));
+    assert.ok(t0.band(shown), 'a dev instance left a marked fixture unmarked');
   });
 });

@@ -17,6 +17,7 @@ use x0k_ui_protocol::offer::SideEffect;
 use x0k_ui_protocol::observe::{check_observation, while_cannot_paint, Observation, ObserveCall, StatePart};
 use x0k_ui_protocol::offer::Offer;
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose};
+use x0k_ui_protocol::screencast::{cast_class, check_cast, check_screencast_offer, first_frame_at, CastCall, Clock, TimedStep};
 use x0k_ui_protocol::shapes::operation_class;
 use x0k_ui_protocol::Refused;
 
@@ -160,6 +161,31 @@ fn run(check: &str, input: &Value) -> Value {
             json!({"taken": disposition(&offer, purpose, class, &action)})
         }
         "operation.class" => json!({"side_effect": operation_class(&field::<String>(input, "operation"))}),
+        "screencast.cast" => {
+            let offer: Offer = field(input, "offer");
+            let holds: Vec<String> = field(input, "holds");
+            let grant: Grant = field(input, "grant");
+            let call: CastCall = field(input, "cast");
+            match check_cast(&offer, &holds, &grant, &call) {
+                Ok(admitted) => json!({"admitted": admitted}),
+                Err(refused) => json!({"refused": refused}),
+            }
+        }
+        "screencast.frame" => {
+            let at_ms: u64 = field(input, "at_ms");
+            let fps: u32 = field(input, "fps");
+            json!({"frame": first_frame_at(at_ms, fps)})
+        }
+        "screencast.offer" => match check_screencast_offer(&field::<Offer>(input, "offer")) {
+            Ok(()) => json!({"fits": true}),
+            Err(fault) => json!({"fits": false, "fault": fault}),
+        },
+        "screencast.class" => {
+            let run: Vec<TimedStep> = field(input, "run");
+            let clock: Clock = field(input, "clock");
+            let classes: Vec<SideEffect> = field(input, "classes");
+            json!({"side_effect": cast_class(&run, clock, &classes)})
+        }
         other => panic!("no binding for check {other}: a file nobody runs fails the suite"),
     }
 }

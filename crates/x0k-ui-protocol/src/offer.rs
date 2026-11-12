@@ -8,14 +8,17 @@ use x0k_datum::shape::Shape;
 pub use crate::history::{Grade, HistoryOffer};
 pub use crate::input::InputOffer;
 pub use crate::replay::{PolicyEntry, Sandbox};
+pub use crate::screencast::ScreencastOffer;
 
 pub const UI_OBSERVE: &str = "ui/observe";
 pub const UI_ACT: &str = "ui/act";
 pub const UI_INPUT: &str = "ui/input";
 pub const UI_HISTORY: &str = "ui/history";
+pub const UI_SCREENCAST: &str = "ui/screencast";
 
-/// How reversible an action's effect is (`operation-surface` §12).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Shape)]
+/// How reversible an action's effect is (`operation-surface` §12), least to
+/// most: a screencast's `cast` takes the highest among its steps'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Shape)]
 #[serde(rename_all = "snake_case")]
 pub enum SideEffect {
     ReadOnly,
@@ -71,6 +74,15 @@ pub struct Offer {
     /// offer names `ui/input` (§10).
     #[serde(default)]
     pub input: Option<InputOffer>,
+    /// Whether the app runs as a dev instance, which only the app decides,
+    /// when it starts (`ui-interfaces` §5). Only a dev instance honours a
+    /// `present` that asks `mark: false`.
+    #[serde(default)]
+    pub dev_instance: bool,
+    /// The clocks the app keeps for a screencast and its bounds, when the
+    /// offer names `ui/screencast` (`ui-screencast` §3).
+    #[serde(default)]
+    pub screencast: Option<ScreencastOffer>,
 }
 
 impl Offer {

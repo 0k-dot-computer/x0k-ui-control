@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/page-answer.md",
-  "source_hash": "bdcbbefb25170fd0",
+  "source_hash": "c6b57f25d3d4c170",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "substrate/apps/ui-control-page/src/answer.ts",
-          "hash": "4629296acdb14d6b"
+          "hash": "7f0c4c329bc52353"
         },
         {
           "path": "substrate/apps/ui-control-page/src/host.ts",

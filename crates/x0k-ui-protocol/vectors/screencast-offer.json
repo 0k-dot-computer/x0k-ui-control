@@ -1,0 +1,344 @@
+{
+  "clause": "ui-screencast §3, ui-interfaces §5",
+  "check": "screencast.offer",
+  "about": "The offer's screencast field is there exactly when the offer names ui/screencast, lists at least one clock, and never lists sampled, which a driver makes from repeated observations. The answer is {fits: true} or {fits: false, fault}.",
+  "vectors": [
+    {
+      "name": "an offer naming ui/screencast with its clocks fits",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "fits": true
+      }
+    },
+    {
+      "name": "an offer naming neither fits",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          }
+        }
+      },
+      "expect": {
+        "fits": true
+      }
+    },
+    {
+      "name": "an offer naming ui/screencast without the field is missing it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          }
+        }
+      },
+      "expect": {
+        "fits": false,
+        "fault": "missing"
+      }
+    },
+    {
+      "name": "an offer with the field and without ui/screencast did not name it",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "streamed"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "fits": false,
+        "fault": "unasked"
+      }
+    },
+    {
+      "name": "an offer listing no clock is broken",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "fits": false,
+        "fault": "no_clock"
+      }
+    },
+    {
+      "name": "an offer listing sampled is broken",
+      "input": {
+        "offer": {
+          "app": "chariot",
+          "instance": "1",
+          "interfaces": [
+            {
+              "name": "ui/observe",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/act",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/input",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/history",
+              "fingerprint": "fp"
+            },
+            {
+              "name": "ui/screencast",
+              "fingerprint": "fp"
+            }
+          ],
+          "actions": [
+            {
+              "name": "card.open",
+              "description": "Open a card",
+              "side_effect": "idempotent_write",
+              "args": {
+                "kind": "any"
+              },
+              "result": {
+                "kind": "any"
+              }
+            }
+          ],
+          "history": {
+            "fixtures": true
+          },
+          "screencast": {
+            "clocks": [
+              "stepped",
+              "sampled"
+            ],
+            "max_frames": 3600,
+            "max_ms": 60000,
+            "unstepped": [
+              "media playback"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "fits": false,
+        "fault": "sampled_offered"
+      }
+    }
+  ]
+}

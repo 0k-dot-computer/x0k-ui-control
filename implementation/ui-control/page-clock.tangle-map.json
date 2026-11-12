@@ -1,0 +1,25 @@
+{
+  "source": "implementation/ui-control/page-clock.md",
+  "source_hash": "336cccaa0404cc39",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "12ada7a190e76c90",
+      "outputs": [
+        {
+          "path": "substrate/apps/ui-control-page/src/clock.ts",
+          "hash": "aa968b424cdebf81"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/clock-page.html",
+          "hash": "654f8b9c38a4db2c"
+        },
+        {
+          "path": "substrate/apps/ui-control-page/tests/clock.test.ts",
+          "hash": "a4cad371b5ad4a1f"
+        }
+      ]
+    }
+  ]
+}

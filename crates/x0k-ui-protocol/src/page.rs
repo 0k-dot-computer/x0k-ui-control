@@ -78,6 +78,8 @@ pub fn page_offer(declared: Declared) -> Offer {
         replay_policy: Vec::new(),
         sandboxes: Vec::new(),
         input: None,
+        dev_instance: false,
+        screencast: None,
     }
 }
 

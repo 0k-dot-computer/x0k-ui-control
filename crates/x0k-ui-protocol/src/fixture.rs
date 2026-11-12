@@ -28,6 +28,18 @@ pub struct PresentCall {
     /// The head the driver read the live state at.
     #[serde(default)]
     pub if_match: Option<String>,
+    /// Whether the host marks the fixture over the window: it does unless
+    /// this is `false`, which only a dev instance honours.
+    #[serde(default)]
+    pub mark: Option<bool>,
+}
+
+impl PresentCall {
+    /// Whether the call leaves the fixture mark on, as every call does unless
+    /// it says `false`.
+    pub fn marked(&self) -> bool {
+        self.mark != Some(false)
+    }
 }
 
 /// `present`'s answer.
@@ -124,5 +136,9 @@ pub fn check_present(
     compiled
         .check(&Datum::from_json(&state))
         .map_err(|misfit| Refused::new(RefusalCode::MisfitState, &misfit.at, misfit.to_string()))?;
+    if !call.marked() && !offer.dev_instance {
+        let why = "only a dev instance shows a fixture without its mark, and this instance is not one";
+        return Err(Refused::new(RefusalCode::MarkRequired, UI_HISTORY, why));
+    }
     Ok(state)
 }

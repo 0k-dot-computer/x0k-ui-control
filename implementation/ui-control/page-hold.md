@@ -108,6 +108,9 @@ export interface Hold {
   /** The layer the host draws drivers' input on, which nothing else of the
    * library sees. */
   drawn: DrawnLayer;
+  /** The clock a host steps for a stepped screencast
+   * (`x0k:implementation/ui-control/page-clock`). */
+  steppedClock: SteppedClock;
 }
 
 /** How a hold treats the host's drawing of input. */
@@ -138,9 +141,16 @@ run, and replaces `requestAnimationFrame` and `cancelAnimationFrame` on the
 window. A second install in the same window answers the first, so a host that
 injects the library and a page that imports it share one hold.
 
-<a name="chunk-hold-file"></a><sub>`src/hold.ts` · `#hold-file` · assembles [hold-contract](#chunk-hold-contract) · [epoch-event-names](#chunk-epoch-event-names) · [watch-mutations](#chunk-watch-mutations) · [watch-events](#chunk-watch-events) · [watch-animations](#chunk-watch-animations) · [defer-frame-callbacks](#chunk-defer-frame-callbacks) · [bounded-waits](#chunk-bounded-waits) · [hold-and-release](#chunk-hold-and-release)</sub>
+The hold installs its stepped clock first
+(`x0k:implementation/ui-control/page-clock`), which wraps the page's timers,
+`performance.now` and `Date`. Every wait of the library's own uses the wall's
+functions the clock kept, `native`, so no screencast stops the library's
+bounds.
+
+<a name="chunk-hold-file"></a><sub>`src/hold.ts` · `#hold-file` · assembles [hold-contract](#chunk-hold-contract) · [epoch-event-names](#chunk-epoch-event-names) · [watch-mutations](#chunk-watch-mutations) · [watch-events](#chunk-watch-events) · [watch-animations](#chunk-watch-animations) · [defer-frame-callbacks](#chunk-defer-frame-callbacks) · [bounded-waits](#chunk-bounded-waits) · [hold-and-release](#chunk-hold-and-release) · [bind-clock](#chunk-bind-clock)</sub>
 
 ```typescript {#hold-file file="src/hold.ts"}
+import { type SteppedClock, installClock } from './clock.ts';
 import { type DrawnLayer, makeLayer } from './drawn-layer.ts';
 
 <<hold-contract>>
@@ -156,6 +166,9 @@ export function installHold(win: Window = window): Hold {
   const existing = (win as any)[INSTALLED] as Hold | undefined;
   if (existing) return existing;
   const doc = win.document;
+  // The clock first, so the library's own waits keep the wall's time functions.
+  const clock = installClock(win);
+  const native = clock.native;
   const nativeRaf = win.requestAnimationFrame.bind(win);
   const nativeCancel = win.cancelAnimationFrame.bind(win);
 
@@ -170,8 +183,9 @@ export function installHold(win: Window = window): Hold {
   <<defer-frame-callbacks>>
   <<bounded-waits>>
   <<hold-and-release>>
+  <<bind-clock>>
 
-  const api: Hold = { epoch: epochNow, changed: bump, hold, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer };
+  const api: Hold = { epoch: epochNow, changed: bump, hold, verify, held: () => held, unpainted, rendered, settled, shadowRoot: (element) => shadows.get(element) ?? null, drawn: layer, steppedClock: clock.stepped };
   (win as any)[INSTALLED] = api;
   return api;
 }
@@ -262,7 +276,9 @@ for (const type of ANIMATION_EVENTS) win.addEventListener(type, bump, { capture:
 
 A Web Animation that script makes with `element.animate()` fires no event when
 it starts. The library wraps `animate` so that a new animation moves the epoch,
-and so does its finish or its cancel.
+and so does its finish or its cancel. While the stepped clock steps, the
+wrapper hands it each new animation at once, so it is caught at its time when
+made.
 
 <a name="chunk-watch-animations"></a><sub>`src/hold.ts` · `#watch-animations`</sub>
 
@@ -272,6 +288,7 @@ const animate = win.Element.prototype.animate;
 win.Element.prototype.animate = function (this: Element, ...args: Parameters<Element['animate']>): Animation {
   const animation = animate.apply(this, args);
   bump();
+  clock.created(animation);
   animation.addEventListener('finish', bump);
   animation.addEventListener('cancel', bump);
   return animation;
@@ -289,8 +306,9 @@ The page's own animation-frame callbacks are its fastest producers of change.
 The library gives each callback an id of its own. When the page is not held,
 the callback goes to the browser at once. When it is held, the callback waits,
 and the release hands it to the browser, so it runs in the first rendering
-update after the release with that update's timestamp. `cancelAnimationFrame`
-works on either kind.
+update after the release with that update's timestamp. While the stepped clock
+steps, a callback waits for the clock instead, which runs it once in the next
+frame with the screencast time. `cancelAnimationFrame` works on every kind.
 
 <a name="chunk-defer-frame-callbacks"></a><sub>`src/hold.ts` · `#defer-frame-callbacks`</sub>
 
@@ -301,20 +319,24 @@ works on either kind.
 let held = false;
 let lastId = 0;
 const waiting = new Map<number, FrameRequestCallback>();
-const scheduled = new Map<number, number>();
+// The callbacks the stepped clock runs, while it steps.
+const stepped = new Map<number, FrameRequestCallback>();
+const scheduled = new Map<number, { native: number; cb: FrameRequestCallback }>();
 const schedule = (id: number, cb: FrameRequestCallback) => {
-  scheduled.set(id, nativeRaf((t) => { scheduled.delete(id); cb(t); }));
+  scheduled.set(id, { native: nativeRaf((t) => { scheduled.delete(id); cb(t); }), cb });
 };
 win.requestAnimationFrame = (cb: FrameRequestCallback): number => {
   const id = ++lastId;
-  if (held) waiting.set(id, cb);
+  if (clock.stepping()) stepped.set(id, cb);
+  else if (held) waiting.set(id, cb);
   else schedule(id, cb);
   return id;
 };
 win.cancelAnimationFrame = (id: number): void => {
   waiting.delete(id);
-  const native = scheduled.get(id);
-  if (native !== undefined) { nativeCancel(native); scheduled.delete(id); }
+  stepped.delete(id);
+  const pending = scheduled.get(id);
+  if (pending !== undefined) { nativeCancel(pending.native); scheduled.delete(id); }
 };
 const updates = (n: number) => new Promise<void>((done) => {
   const step = (left: number) => (left === 0 ? done() : nativeRaf(() => step(left - 1)));
@@ -343,6 +365,11 @@ ended:
 - **The page says so.** `unpainted()` answers either reason, or nothing while
   the page paints. It waits on nothing, so a host can ask it before every call
   at the cost of a round trip.
+- **A stepped page's next frame is its host's.** While the stepped clock
+  steps, the page's callbacks run only when the host advances the clock, so
+  `rendered` answers at once, with why the page cannot paint if it cannot.
+  An answer then names the epoch as it stands, and the frame that shows it is
+  the one the host's next step draws.
 
 Four waits use it: the hold's wait for its pauses and its settle, an answer's
 wait for the rendering update after an action, a `present` or a `release`
@@ -365,11 +392,11 @@ const hiddenNow = () => (doc.visibilityState === 'hidden' ? HIDDEN : undefined);
 // When a wait last ran out with no rendering update, until the next one comes.
 let stalledAt: number | undefined;
 const stalled = () => {
-  stalledAt ??= win.performance.now() - FRAME_WAIT_MS;
+  stalledAt ??= native.now() - FRAME_WAIT_MS;
   nativeRaf(() => { stalledAt = undefined; });
 };
 const unpainted = (): string | undefined => hiddenNow()
-  ?? (stalledAt === undefined ? undefined : `no rendering update has come for ${Math.round(win.performance.now() - stalledAt)} ms`);
+  ?? (stalledAt === undefined ? undefined : `no rendering update has come for ${Math.round(native.now() - stalledAt)} ms`);
 /** `wait`, or why the page cannot paint: it is or becomes hidden, or
  * `FRAME_WAIT_MS` pass with `wait` unanswered. */
 const whilePainting = (wait: Promise<unknown>): Promise<string | undefined> => new Promise((done) => {
@@ -379,28 +406,30 @@ const whilePainting = (wait: Promise<unknown>): Promise<string | undefined> => n
   const finish = (why?: string) => {
     if (finished) return;
     finished = true;
-    clearTimeout(timer);
+    native.clearTimeout(timer);
     doc.removeEventListener('visibilitychange', onVisibility);
     done(why);
   };
   const onVisibility = () => { const why = hiddenNow(); if (why) finish(why); };
   doc.addEventListener('visibilitychange', onVisibility);
-  const timer = setTimeout(() => { stalled(); finish(unpainted()); }, FRAME_WAIT_MS);
+  const timer = native.setTimeout(() => { stalled(); finish(unpainted()); }, FRAME_WAIT_MS);
   wait.then(() => finish(), () => finish());
 });
-const rendered = () => whilePainting(new Promise<void>((done) => win.requestAnimationFrame(() => done())));
+const rendered = () => (clock.stepping()
+  ? Promise.resolve(unpainted())
+  : whilePainting(new Promise<void>((done) => win.requestAnimationFrame(() => done()))));
 const SETTLE_EVENTS = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
 const settled = async (): Promise<string | undefined> => {
   let quiet = 0;
   const heard = () => { quiet = 0; };
   for (const kind of SETTLE_EVENTS) win.addEventListener(kind, heard, { capture: true, passive: true });
   try {
-    const until = win.performance.now() + SETTLE_MS;
+    const until = native.now() + SETTLE_MS;
     do {
       const why = await rendered();
       if (why) return why;
       quiet += 1;
-    } while (quiet <= 2 && win.performance.now() < until);
+    } while (quiet <= 2 && native.now() < until);
     return undefined;
   } finally {
     for (const kind of SETTLE_EVENTS) win.removeEventListener(kind, heard, { capture: true });
@@ -449,7 +478,7 @@ let paused: { animation: Animation; startTime: CSSNumberish | null }[] = [];
 let hidDrawn = false;
 // Why this hold's pauses did not take hold, when the page could not paint.
 let unheld: string | undefined;
-let lapse: ReturnType<typeof setTimeout> | undefined;
+let lapse: number | undefined;
 const release = () => {
   if (!held) return;
   held = false;
@@ -457,7 +486,7 @@ const release = () => {
     layer.hide(false);
     hidDrawn = false;
   }
-  clearTimeout(lapse);
+  native.clearTimeout(lapse);
   for (const { animation, startTime } of paused) {
     if (animation.playState !== 'paused') continue;
     // Its old start time puts it where it would be unheld; one not yet started starts now.
@@ -469,12 +498,12 @@ const release = () => {
   waiting.clear();
 };
 const hold = async <T>(read: () => T, options: HoldOptions = {}): Promise<Held<T>> => {
-  const start = win.performance.now();
+  const start = native.now();
   if (!held) {
     held = true;
     // A host that never verifies does not leave the page held: the page
     // lets itself go, and the epoch moves so the host's check fails.
-    lapse = setTimeout(() => { release(); bump(); }, HOLD_LAPSE_MS);
+    lapse = native.setTimeout(() => { release(); bump(); }, HOLD_LAPSE_MS);
     paused = doc.getAnimations().filter((a) => a.playState === 'running').map((animation) => ({ animation, startTime: animation.startTime }));
     for (const { animation } of paused) animation.pause();
     // A pause takes hold, on the compositor too, when its animation is ready.
@@ -487,7 +516,7 @@ const hold = async <T>(read: () => T, options: HoldOptions = {}): Promise<Held<T
   const why = unheld ?? (await whilePainting(updates(SETTLE_UPDATES)));
   unheld = undefined;
   const epoch = epochNow();
-  const answered: Held<T> = { epoch, read: read(), holdMs: win.performance.now() - start };
+  const answered: Held<T> = { epoch, read: read(), holdMs: native.now() - start };
   return why ? { ...answered, unpainted: why } : answered;
 };
 const verify = (): number => {
@@ -499,7 +528,42 @@ const verify = (): number => {
 
 The hold cannot stop a task that no animation frame scheduled: a timer, a
 network reply, a message, a person's input. Each of those that changes the
-page moves the epoch, and the host's check catches it.
+page moves the epoch, and the host's check catches it. While the stepped
+clock steps, a hold pauses nothing, since the clock has paused every
+animation, and its release gives nothing back; the timers are the clock's.
+
+The hold gives the clock its side: the page's callbacks taken from the
+browser and run when the clock says, the settle of a frame, the epoch and
+whether a hold stands. A settle is a hold's: each animation the clock paused
+since the last settle takes hold, and `SETTLE_UPDATES` rendering updates run.
+
+<a name="chunk-bind-clock"></a><sub>`src/hold.ts` · `#bind-clock`</sub>
+
+```typescript {#bind-clock}
+clock.bind({
+  take() {
+    for (const [id, { native: frame, cb }] of scheduled) { nativeCancel(frame); stepped.set(id, cb); }
+    scheduled.clear();
+    for (const [id, cb] of waiting) stepped.set(id, cb);
+    waiting.clear();
+  },
+  run(timestamp) {
+    const due = [...stepped.values()];
+    stepped.clear();
+    for (const cb of due) {
+      try { cb(timestamp); } catch (e) { native.setTimeout(() => { throw e; }); }
+    }
+    return due.length;
+  },
+  give() {
+    for (const [id, cb] of stepped) schedule(id, cb);
+    stepped.clear();
+  },
+  settle: (ready) => whilePainting(Promise.allSettled(ready).then(() => updates(SETTLE_UPDATES))),
+  epoch: epochNow,
+  held: () => held,
+});
+```
 
 ## The host's drawing layer
 
@@ -557,6 +621,33 @@ them; the host passes the given name and resolves none. The colour stays the
 requester's, never the name's. A colour reaches the stylesheet as the mark's
 `--ink`, so the stylesheet stays one.
 
+A drawing may also carry a takeover the host asks the person for or holds
+(`x0k:architecture/ui-control-channel` §10). A hold is a band in the
+requester's colour around the page and a notice at its top, "*name* has
+taken over · Esc to end"; an ask dims the page and shows a card naming the
+requester, with an Allow and a Refuse button. The name is the label's,
+by the same rule. The host places the card and its buttons, in its own
+units, because the host is what reads the person's click on them; the
+layer draws them where it is told and writes their words. Like every mark,
+neither takes input, and a hold for the frame alone hides both.
+
+A drawing may carry the fixture mark too, naming the state fixture it marks
+(`x0k:architecture/ui-interfaces` §4): a band around the page in the
+protocol's `FIXTURE_INK`, `FIXTURE_BAND` of the host's units wide, and the
+protocol's `FIXTURE_NOTICE` at its foot, drawn alike in every look, so a
+person learns one mark for every app
+(`x0k:implementation/ui-control/protocol`, "What a host draws of input"). The
+host decides when a fixture is marked, since only it knows what `present`
+asked, but the page may end a fixture itself (`ui.endFixture`,
+`x0k:implementation/ui-control/page-answer`) between two of the host's
+paints. So the library tells the layer which fixture stands each time that
+changes, `standing(handle)`, and the layer draws the host's mark only while
+the fixture it names is the one standing, redrawing at once when it goes. A
+person never sees a mark over the live page for a fixture already gone, and a
+host need not hear of the end before the mark leaves. A hold for the frame
+alone hides the mark with the rest, so a capture of the frame alone shows
+none.
+
 <a name="chunk-drawn-layer"></a><sub>`src/drawn-layer.ts` · `#drawn-layer`</sub>
 
 ```typescript {#drawn-layer file="src/drawn-layer.ts"}
@@ -579,6 +670,25 @@ export interface Drawing {
   pointers: { requester: string; name?: string; at: [number, number]; pressed: boolean; hue?: number }[];
   clicks: { at: [number, number]; gone: number; hue?: number }[];
   keys?: { requester: string; text: string; gone: number; hue?: number };
+  takeover?: Takeover | null;
+  /** The state fixture the host marks over the page, by its handle. */
+  fixture?: string | null;
+}
+
+/** A rectangle in the host's units: its left, top, width and height. */
+export type Rect = [number, number, number, number];
+
+/** A takeover the host asks the person for, or holds: who for, the name
+ * its sequence gives, its colour index, and for an ask, where the host
+ * placed its card and its Allow and Refuse buttons. */
+export interface Takeover {
+  asked: boolean;
+  requester: string;
+  name?: string;
+  hue?: number;
+  card?: Rect;
+  allow?: Rect;
+  refuse?: Rect;
 }
 
 /** The layer a host draws drivers' input on. */
@@ -589,10 +699,19 @@ export interface DrawnLayer {
   hide(hidden: boolean): void;
   /** Draw in `look` from the next paint. */
   look(look: InputLook): void;
+  /** The state fixture that stands in the page now, or none: the layer
+   * draws a host's fixture mark only while the fixture it names stands. */
+  standing(handle: string | null): void;
 }
 
 /** The host's own colours, picked by each requester's colour index. */
 const PALETTE = ['#7c3aed', '#0891b2', '#d97706', '#db2777'];
+/** The fixture mark's ink, `x0k-ui-protocol`'s `FIXTURE_INK`, in every look. */
+export const FIXTURE_INK = '#f59e0b';
+/** The fixture mark's band, `FIXTURE_BAND`, in the host's units. */
+const FIXTURE_BAND = 6;
+/** What the fixture mark says, `FIXTURE_NOTICE`. */
+const FIXTURE_NOTICE = 'A fixture, not the live state';
 /** The layer's stylesheet: each mark's colour is its `--ink`. */
 const LOOK = `
   .drawn { position: fixed; inset: 0; pointer-events: none; }
@@ -605,6 +724,18 @@ const LOOK = `
   .dot.pressed { background: white; border: 3px solid var(--ink); }
   .label { position: absolute; font-weight: 500; font-family: system-ui, sans-serif; color: white; background: var(--ink);
            padding: 1px 4px; border-radius: 4px; white-space: pre; }
+  .band { position: absolute; inset: 0; border: 4px solid var(--ink); box-sizing: border-box; }
+  .notice { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); }
+  .dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.25); }
+  .card { position: absolute; box-sizing: border-box; padding: 12px 16px; background: white; color: #111;
+          border: 2px solid var(--ink); border-radius: 8px; font-family: system-ui, sans-serif; }
+  .card p { margin: 0 0 4px; }
+  .button { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+            border-radius: 6px; font-weight: 500; font-family: system-ui, sans-serif; white-space: pre; }
+  .allow { background: var(--ink); color: white; }
+  .refuse { background: white; color: #111; border: 1.5px solid #111; }
+  .fixture { position: absolute; inset: 0; border-style: solid; border-color: var(--ink); box-sizing: border-box; }
+  .fixture-notice { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); }
 `;
 /** How near the viewport's right edge, in CSS pixels, a pointer's labels go to its left. */
 const LABEL_ROOM = 160;
@@ -674,13 +805,73 @@ export function makeLayer(win: Window): DrawnLayer {
     const right = x > win.innerWidth - LABEL_ROOM;
     Object.assign(label.style, right ? { right: `${win.innerWidth - x + 4}px` } : { left: `${x + 16}px` }, { top: `${y + down}px` });
   };
-  return {
+  // An element of `kind` in the host's rectangle `rect`, at `k` CSS pixels a unit.
+  const boxed = (kind: string, [left, top, width, height]: Rect, k: number, text?: string) => {
+    const el = doc.createElement('div');
+    el.className = kind;
+    Object.assign(el.style, { left: `${left * k}px`, top: `${top * k}px`, width: `${width * k}px`, height: `${height * k}px` });
+    if (text) el.textContent = text;
+    return el;
+  };
+  // A takeover's marks: an ask's dimmed page, its card and its two buttons,
+  // or a hold's band around the page and its notice, naming the requester
+  // by the label's rule.
+  const takeover = (held: Takeover, k: number, size: number): Element[] => {
+    const name = named(held.requester, held.name);
+    if (!held.asked) {
+      const band = doc.createElement('div');
+      band.className = 'band';
+      const notice = doc.createElement('div');
+      notice.className = 'label notice';
+      notice.textContent = `${name} has taken over · Esc to end`;
+      notice.style.fontSize = `${size}px`;
+      for (const el of [band, notice]) ink(el, held.hue);
+      return [band, notice];
+    }
+    if (!held.card || !held.allow || !held.refuse) return [];
+    const dim = doc.createElement('div');
+    dim.className = 'dim';
+    const card = boxed('card', held.card, k);
+    card.style.fontSize = `${size}px`;
+    for (const line of [`${name} asks to take over this window's input`, 'Your clicks and keys wait until its sequence ends.']) {
+      const p = doc.createElement('p');
+      p.textContent = line;
+      card.append(p);
+    }
+    const allow = boxed('button allow', held.allow, k, 'Allow');
+    const refuse = boxed('button refuse', held.refuse, k, 'Refuse (Esc)');
+    for (const el of [card, allow, refuse]) {
+      ink(el, held.hue);
+      (el as HTMLElement).style.fontSize = `${size}px`;
+    }
+    return [dim, card, allow, refuse];
+  };
+  // The fixture mark: a band in the fixture's ink around the page, `band`
+  // CSS pixels wide, and its notice at the page's foot.
+  const fixtureMark = (band: number, size: number): Element[] => {
+    const edge = doc.createElement('div');
+    edge.className = 'fixture';
+    edge.style.borderWidth = `${band}px`;
+    const notice = doc.createElement('div');
+    notice.className = 'label fixture-notice';
+    notice.textContent = FIXTURE_NOTICE;
+    notice.style.fontSize = `${size}px`;
+    for (const el of [edge, notice]) (el as HTMLElement).style.setProperty('--ink', FIXTURE_INK);
+    return [edge, notice];
+  };
+  // The fixture standing in the page, as the library last said, and the
+  // host's last drawing, kept to draw again when the fixture changes.
+  let stands: string | null = null;
+  let last: Drawing | null = null;
+  const layer: DrawnLayer = {
     paint(drawing) {
+      last = drawing;
       if (!attach()) return;
       raise();
       const k = win.innerWidth / (drawing.units || win.innerWidth);
       const [ringAt, captions, size] = [declared.ring ?? 8, declared.captions ?? true, declared.label_size ?? 12];
       const parts: Element[] = [];
+      if (drawing.fixture && drawing.fixture === stands) parts.push(...fixtureMark(FIXTURE_BAND * k, size));
       for (const click of drawing.clicks) {
         const ring = doc.createElement('div');
         const across = (2 * ringAt + 28 * click.gone) * k;
@@ -723,6 +914,7 @@ export function makeLayer(win: Window): DrawnLayer {
           parts.push(keys);
         }
       }
+      if (drawing.takeover) parts.push(...takeover(drawing.takeover, k, size));
       drawn.replaceChildren(...parts);
     },
     hide(hidden) {
@@ -731,7 +923,13 @@ export function makeLayer(win: Window): DrawnLayer {
     look(look) {
       declared = look;
     },
+    standing(handle) {
+      if (stands === handle) return;
+      stands = handle;
+      if (last?.fixture) layer.paint(last);
+    },
   };
+  return layer;
 }
 ```
 
@@ -930,6 +1128,10 @@ judges each capture against its read. Six claims are tested per engine:
 9. A page's declared look colours its drivers' input: a requester's mark takes
    the palette's colour for its index, and with no look declared it takes the
    host's own first colour again.
+10. The host's fixture mark is drawn only while the fixture it names stands:
+    its band's ink is in an ordinary hold's capture while the library says
+    that fixture stands, in no hold for the frame alone, and in no capture
+    once the library says none stands, with no paint from the host between.
 
 The judge maps CSS pixels to capture pixels by the capture's width over the
 viewport's. That ratio, and not `devicePixelRatio`, is what the pixels show:
@@ -962,6 +1164,9 @@ export interface ProbeRead { count: number; mover: number; slider: number; width
 
 /** The colour the drawing layer inks a driver's pointer in. */
 export const DRAWN_INK = [124, 58, 237];
+
+/** The colour of the fixture mark's band: `x0k-ui-protocol`'s `FIXTURE_INK`. */
+export const FIXTURE_INK = [245, 158, 11];
 
 /** A script that, in one hold, paints the host's drawing with a pointer at
  * (`x`, `y`) in CSS pixels and answers what the page made of it: whether the
@@ -1128,6 +1333,28 @@ test('a hold for the frame alone captures none of the drawing, and an ordinary h
   assert.deepEqual(shown, DRAWN_INK);
   assert.notDeepEqual(alone, DRAWN_INK);
 });
+test('the host\'s fixture mark is drawn only while the fixture it names stands, and never in the frame alone', async (t) => {
+  const bandAt = async (frameOnly: boolean) => {
+    const held = await heldCapture({
+      hold: async () => JSON.parse(await engine.evaluate(`return JSON.stringify(await globalThis.${PAGE_GLOBAL}.hold(() => window.probeRead(), { frameOnly: ${frameOnly} }));`)),
+      capture: async () => engine.capture(),
+      verify: async () => Number(await engine.evaluate(`return String(globalThis.${PAGE_GLOBAL}.verify());`)),
+    });
+    assert.ok(held.capture, held.refused?.why);
+    const k = held.capture.width / held.read.width;
+    return held.capture.rgb(Math.round(3 * k), Math.round(150 * k));
+  };
+  const drawn = `globalThis.${PAGE_GLOBAL}.drawn`;
+  await engine.evaluate(`${drawn}.standing('x1'); ${drawn}.paint({ units: 0, pointers: [], clicks: [], fixture: 'x1' }); return '';`);
+  const [standing, alone] = [await bandAt(false), await bandAt(true)];
+  await engine.evaluate(`${drawn}.standing(null); return '';`);
+  const gone = await bandAt(false);
+  await engine.evaluate(`${drawn}.paint({ units: 0, pointers: [], clicks: [] }); return '';`);
+  t.diagnostic(`at the band: standing ${standing}, frame alone ${alone}, after the fixture went ${gone}`);
+  assert.deepEqual(standing, FIXTURE_INK, 'no band while the fixture stood');
+  assert.notDeepEqual(alone, FIXTURE_INK, 'the frame alone showed the band');
+  assert.notDeepEqual(gone, FIXTURE_INK, 'the band outlived the fixture');
+});
 test('a page\'s declared look colours its drivers\' input, and the host\'s own colour returns with none', async (t) => {
   const inked = async (look: string, hue: number) => {
     await engine.evaluate(`globalThis.${UI_GLOBAL}.install({ app: 'probe', look: ${look} });
@@ -1165,7 +1392,7 @@ import { heldCapture } from '../src/held-capture.ts';
 import { PAGE_GLOBAL, UI_GLOBAL, pageScript } from '../src/page-script.ts';
 import { chromium } from './hosts/chromium.ts';
 import type { Engine, Image } from './hosts/engine.ts';
-import { DRAWN_INK, drawnApart, judge, type ProbeRead } from './hosts/probe-judge.ts';
+import { DRAWN_INK, FIXTURE_INK, drawnApart, judge, type ProbeRead } from './hosts/probe-judge.ts';
 import { webkitgtk } from './hosts/webkitgtk.ts';
 
 const PAGE = fileURLToPath(new URL('./probe-page.html', import.meta.url));
@@ -1688,6 +1915,12 @@ Inside the drawn pointer, every engine's capture shows the ink, (124, 58, 237),
 in an ordinary hold, and the counter's own colour in a hold for the frame
 alone.
 
+At the fixture mark's band, every engine's capture shows `FIXTURE_INK`,
+(245, 158, 11), while the library says the fixture the mark names stands, the
+page's own white in a hold for the frame alone, and white again once the
+library says none stands, with no paint from the host between (claim 10, run
+alone with `--test-name-pattern="fixture mark"`).
+
 The hold's median was 41 to 42 ms in every engine, its 90th percentile 47 to
 49 ms, and its maximum under 50 ms. The slider's mean drift was within 6 ms of its
 timeline.
@@ -1702,6 +1935,7 @@ was made in this chapter and tangled, and the test run on the projection:
 | a release by `play()` | claim 5 in all four engines; claim 4 in Chromium at ratio 1 | `mean drift -42.3 ms` to `-82.8 ms`; `agreed 33/40 at 0 ms, 30/40 at 25 ms`, the slider at 180 where the hold read 175 |
 | a release by `play()`, in Chromium with `--disable-threaded-animation` | claim 5 only | `mean drift -62.9 ms`; the slider agreed in every trial |
 | a hold that ignores `frameOnly` | claim 8 in all four engines | `frame alone 124,58,237` |
+| the layer drawing the host's fixture mark whatever stands | claim 10 in all four engines | `after the fixture went 245,158,11` |
 | the layer taking input: `pointer-events: auto`, not `inert` | claim 7 in all four engines | `hit: 'x0k-drawn-input'` where the page's is `counter` |
 | the layer made after the library records the shadow roots a page makes | claim 7 in all four engines | `walked: false`, `moved: true`: the walk reaches into the layer's root, and a paint moves the epoch |
 

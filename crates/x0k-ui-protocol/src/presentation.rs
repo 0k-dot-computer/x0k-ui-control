@@ -66,6 +66,8 @@ pub struct InputPresentation {
     /// Each drawn requester's colour index, held while anything of theirs is drawn.
     hues: BTreeMap<String, usize>,
     takeover: Takeover,
+    /// The fixture the host marks over the window while it stands.
+    fixture: Option<String>,
     hidden: bool,
     pub changes: u64,
 }
@@ -155,7 +157,7 @@ impl InputPresentation {
 
     /// Whether the drawing shows anything now.
     pub fn shows_anything(&self) -> bool {
-        !self.hidden && (self.fades() || self.takeover != Takeover::Free)
+        !self.hidden && (self.fades() || self.takeover != Takeover::Free || self.fixture.is_some())
     }
 
     fn fades(&self) -> bool {
@@ -220,6 +222,17 @@ impl InputPresentation {
         true
     }
 
+    /// `requester` holds the window's input without an ask, as the host's
+    /// configuration allows; false while another is asked for or held.
+    pub fn hold_takeover(&mut self, requester: &str) -> bool {
+        if self.takeover != Takeover::Free {
+            return false;
+        }
+        self.takeover = Takeover::Held { requester: requester.to_string() };
+        self.changes += 1;
+        true
+    }
+
     /// The person answers the takeover asked for; false when none is.
     pub fn answer_takeover(&mut self, granted: bool) -> bool {
         let Takeover::Asked { requester } = &self.takeover else { return false };
@@ -255,6 +268,28 @@ impl InputPresentation {
     /// Where the takeover stands.
     pub fn takeover(&self) -> &Takeover {
         &self.takeover
+    }
+}
+
+/// The colour of the fixture mark's band, as `[r, g, b]`, in every host.
+pub const FIXTURE_INK: [u8; 3] = [245, 158, 11];
+/// How wide the fixture mark's band is, in host units.
+pub const FIXTURE_BAND: f64 = 6.0;
+/// What the fixture mark says at the window's foot.
+pub const FIXTURE_NOTICE: &str = "A fixture, not the live state";
+
+impl InputPresentation {
+    /// Mark the fixture `handle` over the window while it stands, or mark none.
+    pub fn mark_fixture(&mut self, handle: Option<&str>) {
+        if self.fixture.as_deref() != handle {
+            self.fixture = handle.map(str::to_string);
+            self.changes += 1;
+        }
+    }
+
+    /// The fixture the host marks now.
+    pub fn fixture_mark(&self) -> Option<&str> {
+        self.fixture.as_deref()
     }
 }
 
@@ -408,6 +443,21 @@ mod tests {
     }
 
     #[test]
+    fn an_allowed_takeover_holds_without_an_ask_one_at_a_time_and_the_exit_key_ends_it() {
+        let mut shown = InputPresentation::default();
+        assert!(shown.hold_takeover("agent"));
+        assert_eq!(shown.takeover(), &Takeover::Held { requester: "agent".to_string() });
+        assert!(!shown.hold_takeover("other"), "a second hold was taken while one stood");
+        assert!(!shown.answer_takeover(true), "an allowed hold was answered as an ask");
+        assert!(shown.person_key("a", true), "a key reached the window under an allowed hold");
+        assert!(shown.person_key(TAKEOVER_EXIT, true));
+        assert_eq!(shown.takeover(), &Takeover::Free, "the exit key did not end an allowed hold");
+        assert!(shown.ask_takeover("other"));
+        assert!(!shown.hold_takeover("agent"), "a hold was taken over an ask");
+        assert_eq!(shown.takeover(), &Takeover::Asked { requester: "other".to_string() });
+    }
+
+    #[test]
     fn two_requesters_hold_two_colours_and_a_colour_is_kept_while_drawn() {
         let now = Instant::now();
         let mut shown = InputPresentation::default();
@@ -450,6 +500,24 @@ mod tests {
         let look: InputLook = serde_json::from_str(r##"{"colors": ["#111111", "#222222"], "pointer": "dot"}"##).expect("a look");
         assert_eq!((look.color(0), look.color(3)), (Some("#111111"), Some("#222222")));
         assert_eq!((look.pointer, look.ring), (PointerShape::Dot, 8.0));
+    }
+
+    #[test]
+    fn a_marked_fixture_is_drawn_until_it_is_unmarked_and_is_no_mark_that_fades() {
+        let now = Instant::now();
+        let mut shown = InputPresentation::default();
+        shown.mark_fixture(Some("x1"));
+        assert!(shown.shows_anything(), "a marked fixture was not drawn");
+        assert_eq!(shown.fixture_mark(), Some("x1"));
+        assert!(!shown.prune(now), "a fixture's mark counted as a mark that fades");
+        shown.hide(true);
+        assert!(!shown.shows_anything(), "a hidden drawing showed a fixture's mark");
+        shown.hide(false);
+        let changes = shown.changes;
+        shown.mark_fixture(Some("x1"));
+        assert_eq!(shown.changes, changes, "marking the fixture marked counted as a change");
+        shown.mark_fixture(None);
+        assert!(!shown.shows_anything(), "an unmarked fixture was drawn");
     }
 
     #[test]

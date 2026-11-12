@@ -11,7 +11,7 @@ use x0k_ui_protocol::history::{
 };
 use x0k_ui_protocol::input::{Perform, PerformAnswer, Source, Step, Target};
 use x0k_ui_protocol::observe::{Bounds, Capture, LayoutNode, Observation};
-use x0k_ui_protocol::offer::{UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE};
+use x0k_ui_protocol::offer::{UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE, UI_SCREENCAST};
 use x0k_ui_protocol::shapes::{
     interface, interface_fingerprint, operation_shapes, HISTORY, NAVIGATE, OBSERVE, PRESENT, RELEASE, SHAPES_FILE,
 };
@@ -25,7 +25,7 @@ fn written() -> Value {
         });
         operations.insert(shape.operation.to_string(), spelled);
     }
-    let fingerprints: Map<String, Value> = [UI_OBSERVE, UI_ACT, UI_INPUT, UI_HISTORY]
+    let fingerprints: Map<String, Value> = [UI_OBSERVE, UI_ACT, UI_INPUT, UI_HISTORY, UI_SCREENCAST]
         .into_iter()
         .filter_map(interface)
         .map(|interface| (interface.name, Value::String(interface.fingerprint)))
@@ -60,6 +60,7 @@ fn node() -> LayoutNode {
         enabled: true,
         focused: false,
         interactive: true,
+        opacity: None,
         action: None,
         source: None,
         composition: None,
@@ -133,7 +134,7 @@ fn a_value_fits_the_shape_its_operation_declares() {
 
     let present = shapes.iter().find(|shape| shape.operation == PRESENT).expect("present");
     for fixture in [Fixture::State { state: json!({"open": true}) }, Fixture::Patch { patch: json!({"open": null}) }] {
-        let call = PresentCall { fixture, fingerprint: "f".to_string(), if_match: Some("s4".to_string()) };
+        let call = PresentCall { fixture, fingerprint: "f".to_string(), if_match: Some("s4".to_string()), mark: None };
         let call = serde_json::to_value(call).expect("JSON");
         assert!(fits(&present.argument, &call, Use::Argument), "{call}");
     }

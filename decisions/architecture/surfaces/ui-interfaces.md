@@ -10,7 +10,8 @@ architecture:ui-interfaces a x0k:Architecture ;
         architecture:core-and-edges,
         architecture:ui-control-channel ;
     x0k:dependsOn architecture:graded-introspection ;
-    x0k:mentions architecture:operation-surface,
+    x0k:mentions architecture:ui-screencast,
+        architecture:operation-surface,
         architecture:fleet-streams,
         architecture:value-shapes,
         architecture:service-authorization,
@@ -24,7 +25,9 @@ at the app (`ui/observe`) and run the app's own named actions (`ui/act`). It
 can send pointer and key input as a person at the screen would (`ui/input`),
 and go back through what the app has shown (`ui/history`). A grant names the
 interfaces it holds, so an agent can be allowed to look without pressing
-anything, or to look back without acting.
+anything, or to look back without acting. Where an app can, a driver may
+also record a run of it as a screencast (`ui/screencast`), an interface of its
+own because only some apps can.
 
 Going back is for looking. A developer takes an app to the frame before a
 bug, sees what was on the screen, and follows that frame's trace ids into the
@@ -107,13 +110,17 @@ installed.
 - A **state fixture** is a presentable state a driver gives an app to show in
   place of its live state. The word is qualified because a cell's fixtures
   (`cell-substrate`) are test inputs of a cell, a different thing.
+- The **fixture mark** is what a host draws over an app's window while a
+  state fixture stands (§4).
+- A **dev instance** is an instance of an app that the app itself started
+  for development, and that its offer says is one (§5).
 
 ## Decision
 
-### 1. Four interfaces, and the side-effect class of each operation
+### 1. The UI interfaces, and the side-effect class of each operation
 
-**Decides:** the operations of the four UI interfaces, and the side-effect
-class (`operation-surface` §12) each operation declares.
+**Decides:** the operations of the four UI interfaces and of `ui/screencast`,
+and the side-effect class (`operation-surface` §12) each operation declares.
 **Invariants:** every operation of a UI interface declares one side-effect
 class; a grant holds an interface whole; a capability only some targets have
 is an interface of its own.
@@ -132,6 +139,9 @@ is refused by name (`ui-control-channel` §7).
 | `ui/history` | `navigate` | `idempotent_write` | §2 |
 | `ui/history` | `present` | `idempotent_write` | §4 |
 | `ui/history` | `release` | `idempotent_write` | §4 |
+| `ui/screencast` | `cast` | the highest class among the run's steps; a run with no steps is `idempotent_write` at the `stepped` clock and `read_only` otherwise | `ui-screencast` §2 |
+| `ui/screencast` | `frames` | `read_only` | `ui-screencast` §2 |
+| `ui/screencast` | `discard` | `idempotent_write` | `ui-screencast` §2 |
 
 `navigate` is a write although its purpose is `inspect` and it performs
 nothing in the world. It changes what the app shows, and while a past
@@ -139,6 +149,12 @@ position is shown the app refuses a person's input (§2). So an agent holding
 `ui/observe` alone cannot freeze the screen of a person using the app. Each
 call names where to go, so calling it twice leaves the app where calling it
 once does.
+
+`ui/screencast` is an interface of its own because only some apps can make a
+screencast (`ui-screencast` §3), and a step of its run needs the interface
+that step's operation belongs to (`ui-screencast` §2). A stepped `cast` with
+no steps is a write for the reason `navigate` is one: it holds the app's
+clock, so what a person sees stops moving while it plays.
 
 The narrow extras `core-and-edges` §2 names (`web/network` for a browser,
 `device/lifecycle` and `device/orientation` for a phone) are interfaces of
@@ -206,7 +222,7 @@ Driving onward from a past position is a `continue` fork
 instance of the app, started at that position, with its own endpoint and its
 own offer. The live app never goes back.
 
-<a name="folio-instance-78306b3a6f70656e2d7175657374696f6e2f636f6e74696e75652d66726f6d2d612d75692d706f736974696f6e-1"></a><sub data-instance-iri="x0k:open-question/continue-from-a-ui-position" data-concept-iri="https://0k.computer/ontology#OpenQuestion" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>OpenQuestion</strong> · Unresolved instance · <code>x0k:open-question/continue-from-a-ui-position</code> · <a href="#folio-source-78306b3a6f70656e2d7175657374696f6e2f636f6e74696e75652d66726f6d2d612d75692d706f736974696f6e-1">source declaration</a> · the graph block at line 210 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:209</sub><a name="folio-source-78306b3a6f70656e2d7175657374696f6e2f636f6e74696e75652d66726f6d2d612d75692d706f736974696f6e-1"></a>
+<a name="folio-instance-78306b3a6f70656e2d7175657374696f6e2f636f6e74696e75652d66726f6d2d612d75692d706f736974696f6e-1"></a><sub data-instance-iri="x0k:open-question/continue-from-a-ui-position" data-concept-iri="https://0k.computer/ontology#OpenQuestion" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>OpenQuestion</strong> · Unresolved instance · <code>x0k:open-question/continue-from-a-ui-position</code> · <a href="#folio-source-78306b3a6f70656e2d7175657374696f6e2f636f6e74696e75652d66726f6d2d612d75692d706f736974696f6e-1">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a6f70656e2d7175657374696f6e2f636f6e74696e75652d66726f6d2d612d75692d706f736974696f6e-1"></a>
 
 ```turtle folio:graph
 @prefix open-question: <https://0k.computer/ontology#open-question/> .
@@ -216,7 +232,7 @@ open-question:continue-from-a-ui-position a x0k:OpenQuestion ;
     x0k:status "open" .
 ```
 
-<a name="folio-instance-78306b3a746563686e652f73686f772d612d706173742d75692d7374617465-2"></a><sub data-instance-iri="x0k:techne/show-a-past-ui-state" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/show-a-past-ui-state</code> · <a href="#folio-source-78306b3a746563686e652f73686f772d612d706173742d75692d7374617465-2">source declaration</a> · the graph block at line 210 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:209</sub><a name="folio-source-78306b3a746563686e652f73686f772d612d706173742d75692d7374617465-2"></a>
+<a name="folio-instance-78306b3a746563686e652f73686f772d612d706173742d75692d7374617465-2"></a><sub data-instance-iri="x0k:techne/show-a-past-ui-state" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/show-a-past-ui-state</code> · <a href="#folio-source-78306b3a746563686e652f73686f772d612d706173742d75692d7374617465-2">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a746563686e652f73686f772d612d706173742d75692d7374617465-2"></a>
 
 ```turtle folio:graph
 @prefix techne: <https://0k.computer/ontology#techne/> .
@@ -263,7 +279,13 @@ the app's effects do while that state is shown.
 - the app may end a fixture that stands itself, for a reason it gives, and
   then shows its live state; the session that presented it is told why
   before any call it makes under that fixture runs against the live state;
-- when the session that presented a fixture ends, the app releases it.
+- when the session that presented a fixture ends, the app releases it;
+- while a state fixture stands, the app's host draws the fixture mark over
+  the window, outside the app's frame, layout and state, as it draws a
+  driver's input (`ui-control-channel` §10), so a capture of the frame alone
+  does not show it;
+- a `present` may ask for `mark: false`; a dev instance (§5) honours it, and
+  any other instance refuses it.
 
 **On failure:** each of these is refused by name before the app shows
 anything:
@@ -273,7 +295,9 @@ anything:
   (`value-shapes`);
 - a call naming a head the live state has moved past, naming the current
   head;
-- `present` to an app whose offer does not say it takes state fixtures.
+- `present` to an app whose offer does not say it takes state fixtures;
+- `present` asking `mark: false` of an instance that is not a dev instance,
+  as `mark_required`.
 
 The app may decline a `present`, and while a fixture stands an `invoke` or a
 `perform`, for now and with the reason it gives, such as an approval that
@@ -298,12 +322,16 @@ ended its fixture has nothing left to release.
 1f4dc28c), among them that presenting and releasing a fixture leaves the live
 state head where it was, and that after the app ends a fixture its
 observation shows `live`, the presenter's next action is refused as
-`fixture_ended` with the app's reason, and its `release` names that reason.
+`fixture_ended` with the app's reason, and its `release` names that reason;
+that `mark: false` is refused outside a dev instance; and, by the probe
+page's ink test, that a capture of the frame alone under a fixture shows no
+mark and a capture with the host's drawing shows it.
 
 - **`present`** takes either a full state or a JSON Merge Patch over the live
   state. It also takes the shape fingerprint the driver read with the state
   (`ui-control-channel` §8, the `state` part), and optionally the head it
-  read the state at. It answers a fixture handle and the first frame presented showing the fixture.
+  read the state at, and may ask for `mark: false`. It answers a fixture
+  handle and the first frame presented showing the fixture.
 - **`release`** takes the handle and answers the first frame presented
   showing the live state.
 
@@ -322,7 +350,24 @@ A replay policy may refuse any of them instead. Every disposition taken is
 traced on the timeline (`graded-introspection` §9;
 `ui-control-channel` §3).
 
-<a name="folio-instance-78306b3a746563686e652f70726573656e742d612d75692d73746174652d66697874757265-3"></a><sub data-instance-iri="x0k:techne/present-a-ui-state-fixture" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/present-a-ui-state-fixture</code> · <a href="#folio-source-78306b3a746563686e652f70726573656e742d612d75692d73746174652d66697874757265-3">source declaration</a> · the graph block at line 210 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:209</sub><a name="folio-source-78306b3a746563686e652f70726573656e742d612d75692d73746174652d66697874757265-3"></a>
+**The fixture mark.** A person must never take a fixture for the live screen,
+so the host marks the window while one stands. The mark is the host's
+drawing, as a driver's input is, and never the app's frame. A recording of
+the frame alone, such as a stepped screencast's (`ui-screencast` §5), carries
+no mark without removing anything from the app, and the person watching
+still sees one. Only a dev instance, which no one's live work runs in, may
+leave the mark off what the person sees, so that a recording of what the
+person sees shows the app as it will look.
+
+<a name="folio-instance-78306b3a746563686e652f6d61726b2d612d75692d73746174652d66697874757265-3"></a><sub data-instance-iri="x0k:techne/mark-a-ui-state-fixture" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/mark-a-ui-state-fixture</code> · <a href="#folio-source-78306b3a746563686e652f6d61726b2d612d75692d73746174652d66697874757265-3">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a746563686e652f6d61726b2d612d75692d73746174652d66697874757265-3"></a>
+
+```turtle folio:graph
+@prefix techne: <https://0k.computer/ontology#techne/> .
+techne:mark-a-ui-state-fixture a x0k:Techne ;
+    x0k:status "proposed" .
+```
+
+<a name="folio-instance-78306b3a746563686e652f70726573656e742d612d75692d73746174652d66697874757265-4"></a><sub data-instance-iri="x0k:techne/present-a-ui-state-fixture" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/present-a-ui-state-fixture</code> · <a href="#folio-source-78306b3a746563686e652f70726573656e742d612d75692d73746174652d66697874757265-4">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a746563686e652f70726573656e742d612d75692d73746174652d66697874757265-4"></a>
 
 ```turtle folio:graph
 @prefix techne: <https://0k.computer/ontology#techne/> .
@@ -331,11 +376,12 @@ techne:present-a-ui-state-fixture a x0k:Techne ;
     x0k:dependsOn techne:show-a-past-ui-state .
 ```
 
-### 5. The offer states grades, history, replay policy and sandboxes
+### 5. The offer states grades, history, replay policy, sandboxes, the dev instance and screencasts
 
 **Decides:** the fields the offer (`ui-control-channel` §8) carries so an
-app outside x0k's runtimes states how deeply it can be looked into and what
-going back does to its effects.
+app outside x0k's runtimes states how deeply it can be looked into, what
+going back does to its effects, whether it runs for development, and how it
+keeps time for a screencast.
 **Invariants:**
 
 - `grades` lists the introspection grades the app supplies
@@ -350,6 +396,11 @@ going back does to its effects.
   default;
 - `sandboxes` names each stand-in target the app declares, with the classes
   or actions it serves;
+- the offer's instance (`ui-control-channel` §8) says whether it is a dev
+  instance, and only the app decides that, when it starts;
+- `screencast` is present when the offer names `ui/screencast`, and lists the
+  clocks the app answers, its longest screencast in frames and in time, and
+  the sources of motion its stepped clock does not step (`ui-screencast` §3);
 - no replay policy lowers a floor of `graded-introspection` §9.
 
 **On failure:** the driver's end refuses an offer whose replay policy lowers
@@ -387,8 +438,9 @@ the frames `ui-control-channel` §7 decides.
   itself for a person to read, such as Apollo or a person's driver. The
   client sets it on each call that carries it. It is a label and never
   authority: the requester stays the one the peer's credentials or
-  `on_behalf_of` name, and the grant, a takeover's ask of the person and
-  every tier read that requester, never the name. The app may show the name,
+  `on_behalf_of` name, and the grant, the host's configuration of who
+  allows a takeover (`ui-control-channel` §10), a takeover's ask of the
+  person and every tier read that requester, never the name. The app may show the name,
   as its host's drawing of input does (`ui-control-channel` §10);
 
 <!-- inferred: the endpoint does not yet read peer credentials, and x0k's shell
@@ -454,7 +506,7 @@ first and a layout from the second. The two answers name different frames,
 so a driver that needs a capture and a layout that line up asks one handler
 for both.
 
-<a name="folio-instance-78306b3a746563686e652f66616c6c2d6261636b2d6265747765656e2d75692d6564676573-4"></a><sub data-instance-iri="x0k:techne/fall-back-between-ui-edges" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/fall-back-between-ui-edges</code> · <a href="#folio-source-78306b3a746563686e652f66616c6c2d6261636b2d6265747765656e2d75692d6564676573-4">source declaration</a> · the graph block at line 210 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:209</sub><a name="folio-source-78306b3a746563686e652f66616c6c2d6261636b2d6265747765656e2d75692d6564676573-4"></a>
+<a name="folio-instance-78306b3a746563686e652f66616c6c2d6261636b2d6265747765656e2d75692d6564676573-5"></a><sub data-instance-iri="x0k:techne/fall-back-between-ui-edges" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/fall-back-between-ui-edges</code> · <a href="#folio-source-78306b3a746563686e652f66616c6c2d6261636b2d6265747765656e2d75692d6564676573-5">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a746563686e652f66616c6c2d6261636b2d6265747765656e2d75692d6564676573-5"></a>
 
 ```turtle folio:graph
 @prefix techne: <https://0k.computer/ontology#techne/> .
@@ -487,7 +539,7 @@ The `ui-control` edge passes its part by its own pin. Each app behind it is
 held by the same suite run against the app over its endpoint, which is how an
 app in another language shows it speaks the protocol.
 
-<a name="folio-instance-78306b3a6f70656e2d7175657374696f6e2f6e616d696e672d616e2d617070732d636f6e666f726d616e63652d72756e-5"></a><sub data-instance-iri="x0k:open-question/naming-an-apps-conformance-run" data-concept-iri="https://0k.computer/ontology#OpenQuestion" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>OpenQuestion</strong> · Unresolved instance · <code>x0k:open-question/naming-an-apps-conformance-run</code> · <a href="#folio-source-78306b3a6f70656e2d7175657374696f6e2f6e616d696e672d616e2d617070732d636f6e666f726d616e63652d72756e-5">source declaration</a> · the graph block at line 210 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:209</sub><a name="folio-source-78306b3a6f70656e2d7175657374696f6e2f6e616d696e672d616e2d617070732d636f6e666f726d616e63652d72756e-5"></a>
+<a name="folio-instance-78306b3a6f70656e2d7175657374696f6e2f6e616d696e672d616e2d617070732d636f6e666f726d616e63652d72756e-6"></a><sub data-instance-iri="x0k:open-question/naming-an-apps-conformance-run" data-concept-iri="https://0k.computer/ontology#OpenQuestion" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>OpenQuestion</strong> · Unresolved instance · <code>x0k:open-question/naming-an-apps-conformance-run</code> · <a href="#folio-source-78306b3a6f70656e2d7175657374696f6e2f6e616d696e672d616e2d617070732d636f6e666f726d616e63652d72756e-6">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a6f70656e2d7175657374696f6e2f6e616d696e672d616e2d617070732d636f6e666f726d616e63652d72756e-6"></a>
 
 ```turtle folio:graph
 @prefix open-question: <https://0k.computer/ontology#open-question/> .
@@ -497,7 +549,7 @@ open-question:naming-an-apps-conformance-run a x0k:OpenQuestion ;
     x0k:status "open" .
 ```
 
-<a name="folio-instance-78306b3a746563686e652f7265667573652d612d6e6f6e636f6e666f726d696e672d75692d68616e646c6572-6"></a><sub data-instance-iri="x0k:techne/refuse-a-nonconforming-ui-handler" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/refuse-a-nonconforming-ui-handler</code> · <a href="#folio-source-78306b3a746563686e652f7265667573652d612d6e6f6e636f6e666f726d696e672d75692d68616e646c6572-6">source declaration</a> · the graph block at line 210 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:209</sub><a name="folio-source-78306b3a746563686e652f7265667573652d612d6e6f6e636f6e666f726d696e672d75692d68616e646c6572-6"></a>
+<a name="folio-instance-78306b3a746563686e652f7265667573652d612d6e6f6e636f6e666f726d696e672d75692d68616e646c6572-7"></a><sub data-instance-iri="x0k:techne/refuse-a-nonconforming-ui-handler" data-concept-iri="https://0k.computer/ontology#Techne" data-source-document="corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md"><strong>Techne</strong> · Unresolved instance · <code>x0k:techne/refuse-a-nonconforming-ui-handler</code> · <a href="#folio-source-78306b3a746563686e652f7265667573652d612d6e6f6e636f6e666f726d696e672d75692d68616e646c6572-7">source declaration</a> · the graph block at line 226 is not Turtle: The prefix open-question: has not been declared at corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md:225</sub><a name="folio-source-78306b3a746563686e652f7265667573652d612d6e6f6e636f6e666f726d696e672d75692d68616e646c6572-7"></a>
 
 ```turtle folio:graph
 @prefix techne: <https://0k.computer/ontology#techne/> .
@@ -550,9 +602,13 @@ techne:refuse-a-nonconforming-ui-handler a x0k:Techne ;
 This decision connects its neighbours and amends none. It adds one field to
 the observation `ui-control-channel` §8 decides (§3 above).
 
+- [ui-screencast](ui-screencast.md) — `ui/screencast`, whose operations §1
+  classes, whose run presents fixtures (§4) and whose clocks the offer states
+  (§5).
+
 - [ui-control-channel](ui-control-channel.md) — the endpoint protocol,
   `ui/observe`, `ui/act` and `ui/input`, which this decision adds to.
-- [core-and-edges](core-and-edges.md) — §2 names the four interfaces and the
+- [core-and-edges](core-and-edges.md) — §2 names the UI interfaces and the
   edges by reach; its §5, installation as partial application, is where
   this decision's §8 refusal happens.
 - [graded-introspection](../substrate/graded-introspection.md) — §1's grades

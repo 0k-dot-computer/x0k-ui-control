@@ -6,17 +6,30 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde_json::{json, Value};
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::thread::ThreadId;
+
 use tauri::webview::PageLoadEvent;
-use tauri::{Manager, Webview, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use tokio::sync::oneshot;
 use x0k_ui_endpoint::client::UiClient;
-use x0k_ui_protocol::input::{check_perform, HeldFrame, Perform};
+use x0k_ui_endpoint::CastAnswer;
+use x0k_ui_protocol::input::{check_perform, Event, HeldFrame, Perform};
 use x0k_ui_protocol::offer::{Offer, UI_INPUT};
-use x0k_ui_tauri::{held_capture, CoveredPainting, Held, HoldingHost, PageError, PageHold, PageHost, Pending, Snapshot, HOLD_TRIES, PAGE_GLOBAL};
+use x0k_ui_tauri::{
+    held_capture, last_delivered, resume_input, AskedInput, CoveredPainting, DeliveredInput, Held, HoldingHost, InputTurn, PageError, PageHold, PageHost, Pending,
+    Snapshot, TakeoverPolicy, UiPlugin, HOLD_TRIES, PAGE_GLOBAL,
+};
 
 /// The probe app's name, which its endpoint is named for.
 const APP: &str = "x0k-ui-tauri-probe";
+/// The variable whose JSON is the host's takeover configuration, the serde
+/// form of `TakeoverPolicy`; unset, every takeover asks.
+const TAKEOVER: &str = "X0K_UI_TAURI_PROBE_TAKEOVER";
+/// The variable whose presence has the probe app run as a dev instance.
+const DEV_INSTANCE: &str = "X0K_UI_TAURI_PROBE_DEV_INSTANCE";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -30,13 +43,17 @@ fn main() {
     };
     let (width, height): (f64, f64) = (width.parse().expect("width"), height.parse().expect("height"));
     let (socket, accelerate, page) = (socket.clone(), policy == "ALWAYS", page.clone());
+    let _ = MAIN.set(std::thread::current().id());
     let plugin = match &at {
-        Some(path) => x0k_ui_tauri::ui_plugin_at(path.clone(), "probe", CoveredPainting::default()),
-        None => x0k_ui_tauri::ui_plugin(APP, "probe"),
+        Some(path) => UiPlugin::at(path.clone(), "probe"),
+        None => UiPlugin::new(APP, "probe"),
     };
     let endpoint = at.unwrap_or_else(|| x0k_ui_tauri::endpoint_socket_path(APP));
+    let takeover: TakeoverPolicy = std::env::var(TAKEOVER).map_or_else(|_| TakeoverPolicy::default(), |table| serde_json::from_str(&table).expect("the takeover table"));
+    let plugin = plugin.dev_instance(std::env::var_os(DEV_INSTANCE).is_some());
     tauri::Builder::default()
-        .plugin(plugin)
+        .plugin(plugin.covered(CoveredPainting::default()).on_input(record_delivered).before_input(turn).takeover(takeover).build())
+        .invoke_handler(tauri::generate_handler![probe_heard])
         .setup(move |app| {
             let (socket, endpoint) = (socket.clone(), endpoint.clone());
             let window = WebviewWindowBuilder::new(app, "probe", WebviewUrl::App(page.into()))
@@ -53,8 +70,9 @@ fn main() {
                 let settings = WebViewExt::settings(&platform.inner()).expect("the webview's settings");
                 settings.set_hardware_acceleration_policy(if accelerate { HardwareAccelerationPolicy::Always } else { HardwareAccelerationPolicy::Never });
             })?;
+            watch_app_hooks(&window);
             #[cfg(not(target_os = "linux"))]
-            let _ = (window, accelerate);
+            let _ = accelerate;
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -68,6 +86,7 @@ async fn serve(socket: String, endpoint: PathBuf, webview: Webview<Wry>) {
     stream.set_nonblocking(true).expect("a nonblocking socket");
     let (read, mut write) = UnixStream::from_std(stream).expect("the test's socket").into_split();
     let page = PageHost::new(webview.clone());
+    let mut detached = Vec::new();
     send_line(&mut write, json!({ "ready": tauri::VERSION })).await;
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -81,7 +100,20 @@ async fn serve(socket: String, endpoint: PathBuf, webview: Webview<Wry>) {
             Some("forge") => Ok(forge(&page, &webview).await),
             Some("hide") => webview.window().hide().map(|()| json!({})).map_err(PageError::from),
             Some("show") => webview.window().show().map(|()| json!({})).map_err(PageError::from),
+            Some("endpoint") if request["detach"] == true => {
+                let (endpoint, request) = (endpoint.clone(), request.clone());
+                detached.push(tauri::async_runtime::spawn(async move { endpoint_probe(&endpoint, &request).await }));
+                Ok(json!({ "detached": detached.len() - 1 }))
+            }
             Some("endpoint") => Ok(endpoint_probe(&endpoint, &request).await),
+            Some("join") => match request["detached"].as_u64().and_then(|n| detached.get_mut(n as usize)) {
+                Some(call) => Ok(call.await.unwrap_or_else(|e| json!({ "fault": e.to_string() }))),
+                None => Ok(json!({ "error": "no such detached call" })),
+            },
+            Some("person") => person_input(&webview, &request).await,
+            Some("told") => Ok(told_probe(&webview)),
+            Some("turn") => Ok(turn_probe(&webview, &request)),
+            Some("real") => real_event(&webview).await,
             other => Ok(json!({ "error": format!("unknown op {other:?}") })),
         };
         let mut reply = reply.unwrap_or_else(|e| json!({ "error": e.to_string() }));
@@ -202,26 +234,333 @@ async fn forge(page: &PageHost<Wry>, webview: &Webview<Wry>) -> Value {
 /// One call to the app's endpoint at `endpoint` as `request` names it, and how long it took.
 async fn endpoint_probe(endpoint: &Path, request: &Value) -> Value {
     let started = Instant::now();
-    let answered = endpoint_call(endpoint, request["call"].as_str().unwrap_or_default(), request["argument"].clone()).await;
+    let answered = endpoint_call(endpoint, request).await;
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     match answered {
-        Ok(answer) => json!({ "answer": answer, "ms": ms }),
+        Ok((answer, None)) => json!({ "answer": answer, "ms": ms }),
+        Ok((answer, Some(frames))) => json!({ "answer": answer, "frames": frames, "ms": ms }),
         Err(fault) => json!({ "fault": fault.to_string(), "ms": ms }),
     }
 }
 
+/// How long the probe waits for a screencast to be played.
+const CAST_WITHIN: Duration = Duration::from_secs(600);
+
 /// Why a call to the endpoint got no answer: the socket, the client, or a request the test spelled wrong.
 type Fault = Box<dyn std::error::Error + Send + Sync>;
 
-async fn endpoint_call(endpoint: &Path, call: &str, argument: Value) -> Result<Value, Fault> {
+/// The endpoint's answer to the call `request` names, and to a cast the
+/// frames it asks for, read in the cast's own session, which stays open
+/// `hold_ms` after it answers, since a session's end releases a fixture it
+/// presented.
+async fn endpoint_call(endpoint: &Path, request: &Value) -> Result<(Value, Option<Value>), Fault> {
     let stream = UnixStream::connect(endpoint).await?;
     let client = UiClient::open(stream).await?;
-    Ok(match call {
-        "observe" => serde_json::to_value(client.observe(&serde_json::from_value(argument)?).await?)?,
-        "invoke" => serde_json::to_value(client.invoke(&serde_json::from_value(argument)?).await?)?,
-        "perform" => serde_json::to_value(client.perform(&serde_json::from_value(argument)?).await?)?,
+    let argument = request["argument"].clone();
+    let hold = Duration::from_millis(request["hold_ms"].as_u64().unwrap_or(0));
+    let answer = match request["call"].as_str().unwrap_or_default() {
+        "observe" => (serde_json::to_value(client.observe(&serde_json::from_value(argument)?).await?)?, None),
+        "invoke" => (serde_json::to_value(client.invoke(&serde_json::from_value(argument)?).await?)?, None),
+        "perform" => (serde_json::to_value(client.perform(&serde_json::from_value(argument)?).await?)?, None),
+        "present" => (serde_json::to_value(client.present(&serde_json::from_value(argument)?).await?)?, None),
+        "release" => (serde_json::to_value(client.release(&serde_json::from_value(argument)?).await?)?, None),
+        "cast" => {
+            let cast = client.cast(&serde_json::from_value(argument)?, CAST_WITHIN).await?;
+            let frames = match (&cast, request.get("frames")) {
+                (CastAnswer::Cast(screencast), Some(asked)) => {
+                    let mut asked = asked.clone();
+                    asked["handle"] = json!(screencast.handle);
+                    Some(serde_json::to_value(client.frames(&serde_json::from_value(asked)?).await?)?)
+                }
+                _ => None,
+            };
+            (serde_json::to_value(cast)?, frames)
+        }
         other => return Err(format!("no endpoint call {other}").into()),
+    };
+    tokio::time::sleep(hold).await;
+    Ok(answer)
+}
+
+/// What the probe app saw of input: the events its observer was told of,
+/// the page's requests about them, and the app-level hooks' events.
+struct Witness {
+    told: Vec<Value>,
+    heard: Vec<Value>,
+    hooks: Vec<Value>,
+    last_told: Option<Instant>,
+}
+
+static WITNESS: Mutex<Witness> = Mutex::new(Witness { told: Vec::new(), heard: Vec::new(), hooks: Vec::new(), last_told: None });
+/// The thread `main` runs on, which Tauri's main thread is.
+static MAIN: OnceLock<ThreadId> = OnceLock::new();
+
+fn witness() -> std::sync::MutexGuard<'static, Witness> {
+    WITNESS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The host's observer: one record per event the plugin delivers.
+fn record_delivered(delivered: &DeliveredInput) {
+    let main = MAIN.get() == Some(&std::thread::current().id());
+    let (kind, at, key) = match &delivered.event {
+        Event::Move { x, y, .. } => ("move", Some((*x, *y)), None),
+        Event::Press { x, y, .. } => ("press", Some((*x, *y)), None),
+        Event::Release { x, y, .. } => ("release", Some((*x, *y)), None),
+        Event::KeyDown { key, .. } => ("key_down", None, Some(key.clone())),
+        Event::KeyUp { key, .. } => ("key_up", None, Some(key.clone())),
+        Event::Scroll { x, y, .. } => ("scroll", Some((*x, *y)), None),
+    };
+    let mut seen = witness();
+    seen.last_told = Some(delivered.at);
+    seen.told.push(json!({
+        "kind": kind, "x": at.map(|a| a.0), "y": at.map(|a| a.1), "key": key, "webview": delivered.webview,
+        "requester": delivered.requester, "name": delivered.requester_name, "time": delivered.platform_time, "main": main,
+    }));
+}
+
+/// The page's request about an event of `kind` it handled: how many events
+/// the host had been told of when it arrived, and whether `last_delivered` answered.
+#[tauri::command]
+fn probe_heard(app: AppHandle, kind: String) {
+    let last = last_delivered(&app, "probe").is_some();
+    let mut seen = witness();
+    let told = seen.told.len();
+    seen.heard.push(json!({ "kind": kind, "told": told, "last": last }));
+}
+
+/// What was seen since the last `told`, forgotten as it is answered, and
+/// whether `last_delivered` answers the instant of the last event told.
+fn told_probe(webview: &Webview<Wry>) -> Value {
+    let last = last_delivered(webview, "probe");
+    let mut seen = witness();
+    let answer = json!({
+        "told": std::mem::take(&mut seen.told), "heard": std::mem::take(&mut seen.heard), "hooks": std::mem::take(&mut seen.hooks),
+        "lastIsLastTold": last.is_some() && last == seen.last_told,
+    });
+    answer
+}
+
+/// What the host's `before_input` answers, as the test last set it.
+static TURN: Mutex<Option<InputTurn>> = Mutex::new(None);
+
+/// The host's answer to whether a driver's sequence may run.
+fn turn(_asked: &AskedInput<'_>) -> InputTurn {
+    TURN.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or(InputTurn::Run)
+}
+
+/// Set what `turn` answers, and let it run after `resume_after_ms` when asked.
+fn turn_probe(webview: &Webview<Wry>, request: &Value) -> Value {
+    let why = request["why"].as_str().unwrap_or_default().to_string();
+    let answer = match request["turn"].as_str() {
+        Some("decline") => InputTurn::Decline(why),
+        Some("wait") => InputTurn::Wait { within: Duration::from_millis(request["within_ms"].as_u64().unwrap_or(0)), why },
+        _ => InputTurn::Run,
+    };
+    *TURN.lock().unwrap_or_else(PoisonError::into_inner) = Some(answer);
+    if let Some(after) = request["resume_after_ms"].as_u64() {
+        let app = webview.app_handle().clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(after)).await;
+            *TURN.lock().unwrap_or_else(PoisonError::into_inner) = Some(InputTurn::Run);
+            resume_input(&app);
+        });
+    }
+    json!({})
+}
+
+/// The input events of GDK's kinds a hook records, by name.
+#[cfg(target_os = "linux")]
+fn input_kind(kind: gtk::gdk::EventType) -> Option<&'static str> {
+    use gtk::gdk::EventType as E;
+    Some(match kind {
+        E::MotionNotify => "MotionNotify",
+        E::ButtonPress => "ButtonPress",
+        E::ButtonRelease => "ButtonRelease",
+        E::KeyPress => "KeyPress",
+        E::KeyRelease => "KeyRelease",
+        E::Scroll => "Scroll",
+        _ => return None,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn hooked(hook: &str, event: &gtk::gdk::Event) {
+    if let Some(kind) = input_kind(event.event_type()) {
+        witness().hooks.push(json!({ "hook": hook, "kind": kind, "time": event.time() }));
+    }
+}
+
+/// GTK's key snooper, which sees each key event `gtk_main_do_event` dispatches.
+#[cfg(target_os = "linux")]
+unsafe extern "C" fn snooped(_: *mut gtk::ffi::GtkWidget, key: *mut gtk::gdk::ffi::GdkEventKey, _: gtk::glib::ffi::gpointer) -> std::os::raw::c_int {
+    // SAFETY: GTK hands the snooper a key event, valid for the call.
+    let (kind, time) = unsafe { ((*key).type_, (*key).time) };
+    let kind = if kind == gtk::gdk::ffi::GDK_KEY_PRESS { "KeyPress" } else { "KeyRelease" };
+    witness().hooks.push(json!({ "hook": "key snooper", "kind": kind, "time": time }));
+    0
+}
+
+/// The app-level hooks of a GTK app: a GDK event handler, a key snooper and
+/// the toplevel window's `event` signal.
+#[cfg(target_os = "linux")]
+fn watch_app_hooks(window: &WebviewWindow<Wry>) {
+    use gtk::prelude::*;
+    gtk::gdk::Event::set_handler(Some(|event: &mut gtk::gdk::Event| {
+        hooked("gdk event handler", event);
+        gtk::main_do_event(event);
+    }));
+    // SAFETY: the snooper is a function for the app's life, and takes no data.
+    unsafe { gtk::ffi::gtk_key_snooper_install(Some(snooped), std::ptr::null_mut()) };
+    if let Ok(toplevel) = window.gtk_window() {
+        toplevel.connect_event(|_, event| {
+            hooked("toplevel event", event);
+            gtk::glib::Propagation::Proceed
+        });
+    }
+}
+
+/// A Shift key's press and release in the webview's toplevel window, put on
+/// GDK's queue as the windowing system's events are, and their time. A key,
+/// not a motion: GDK holds a queued motion back until its frame clock flushes.
+#[cfg(target_os = "linux")]
+async fn real_event(webview: &Webview<Wry>) -> Result<Value, PageError> {
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::*;
+    let (done, put) = oneshot::channel();
+    webview.with_webview(move |platform| {
+        let Some(window) = platform.inner().toplevel().and_then(|top| top.window()) else { return };
+        let keyboard = window.display().default_seat().and_then(|seat| seat.keyboard());
+        let time = (gtk::glib::monotonic_time() / 1000) as u32;
+        for kind in [gtk::gdk::EventType::KeyPress, gtk::gdk::EventType::KeyRelease] {
+            let mut made = gtk::gdk::Event::new(kind);
+            made.set_device(keyboard.as_ref());
+            let raw: &mut gtk::gdk::ffi::GdkEventKey = made.downcast_mut::<gtk::gdk::EventKey>().expect("a key event").as_mut();
+            (raw.window, raw.time, raw.keyval, raw.is_modifier) = (window.to_glib_full(), time, *gtk::gdk::keys::constants::Shift_L, 1);
+            made.put();
+        }
+        let _ = done.send(time);
+    })?;
+    let time = put.await.map_err(|_| PageError::NoWindow)?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    Ok(json!({ "time": time }))
+}
+
+/// The app-level hook of an AppKit app: a local event monitor for every
+/// kind of event, kept for the app's life.
+#[cfg(target_os = "macos")]
+fn watch_app_hooks(_window: &WebviewWindow<Wry>) {
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
+    let seen = block2::RcBlock::new(|event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: AppKit hands the monitor an event, valid for the call.
+        let event_ref = unsafe { event.as_ref() };
+        let kind = match event_ref.r#type() {
+            NSEventType::MouseMoved => "MouseMoved".to_string(),
+            NSEventType::LeftMouseDown => "LeftMouseDown".to_string(),
+            NSEventType::LeftMouseUp => "LeftMouseUp".to_string(),
+            NSEventType::LeftMouseDragged => "LeftMouseDragged".to_string(),
+            NSEventType::KeyDown => "KeyDown".to_string(),
+            NSEventType::KeyUp => "KeyUp".to_string(),
+            NSEventType::FlagsChanged => "FlagsChanged".to_string(),
+            NSEventType::ScrollWheel => "ScrollWheel".to_string(),
+            other => format!("{other:?}"),
+        };
+        witness().hooks.push(json!({ "hook": "local monitor", "kind": kind, "time": event_ref.timestamp() }));
+        event.as_ptr()
+    });
+    // SAFETY: the handler answers the event it was given, a valid pointer.
+    let monitor = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::Any, &seen) };
+    std::mem::forget(monitor);
+}
+
+/// A mouse move in the webview's window, handed to `NSApplication`'s
+/// `sendEvent:` as AppKit hands it a person's, and its timestamp.
+#[cfg(target_os = "macos")]
+async fn real_event(webview: &Webview<Wry>) -> Result<Value, PageError> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSView};
+    use objc2_foundation::{NSPoint, NSProcessInfo};
+    let (done, sent) = oneshot::channel();
+    webview.with_webview(move |platform| {
+        // SAFETY: on macOS `inner()` is the webview's WKWebView, an NSView,
+        // alive while this closure runs on the main thread.
+        let view = unsafe { &*platform.inner().cast::<NSView>() };
+        let (Some(mtm), Some(window)) = (MainThreadMarker::new(), view.window()) else { return };
+        let time = NSProcessInfo::processInfo().systemUptime();
+        let made = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            NSEventType::MouseMoved, NSPoint::new(10.0, 10.0), NSEventModifierFlags::empty(), time, window.windowNumber(), None, 0, 0, 0.0,
+        );
+        if let Some(made) = made {
+            NSApplication::sharedApplication(mtm).sendEvent(&made);
+            let _ = done.send(time);
+        }
+    })?;
+    let time = sent.await.map_err(|_| PageError::NoWindow)?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    Ok(json!({ "time": time }))
+}
+
+/// A person's input, made as the windowing system's events arrive: put on
+/// GDK's queue, so GDK's event handler hands it to `gtk_main_do_event` and
+/// the window meets it as a person's. A key's press and release go to the
+/// toplevel window; a click's press and release of the first button go to
+/// the webview widget's window at `click`, in its units.
+#[cfg(target_os = "linux")]
+async fn person_input(webview: &Webview<Wry>, request: &Value) -> Result<Value, PageError> {
+    use gtk::gdk::{self, EventType};
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::*;
+    let key = request["key"].as_str().map(str::to_string);
+    let click = request["click"].as_array().map(|at| (at[0].as_f64().unwrap_or(0.0), at[1].as_f64().unwrap_or(0.0)));
+    let (done, put) = oneshot::channel();
+    webview.with_webview(move |platform| {
+        let view = platform.inner();
+        let (Some(window), Some(toplevel)) = (view.window(), view.toplevel().and_then(|top| top.window())) else { return };
+        let seat = window.display().default_seat();
+        let time = (gtk::glib::monotonic_time() / 1000) as u32;
+        if let Some(key) = &key {
+            let keyval = if key == "Escape" { *gdk::keys::constants::Escape } else { *key.chars().next().map(gdk::keys::Key::from_unicode).unwrap_or(gdk::keys::constants::VoidSymbol) };
+            let entry = gdk::Keymap::for_display(&window.display()).and_then(|map| map.entries_for_keyval(keyval).into_iter().next());
+            for kind in [EventType::KeyPress, EventType::KeyRelease] {
+                let mut made = gdk::Event::new(kind);
+                made.set_device(seat.as_ref().and_then(|seat| seat.keyboard()).as_ref());
+                let raw: &mut gdk::ffi::GdkEventKey = made.downcast_mut::<gdk::EventKey>().expect("a key event").as_mut();
+                (raw.window, raw.time, raw.keyval) = (toplevel.to_glib_full(), time, keyval);
+                if let Some(entry) = &entry {
+                    (raw.hardware_keycode, raw.group) = (entry.keycode() as u16, entry.group() as u8);
+                }
+                made.put();
+            }
+        }
+        if let Some((x, y)) = click {
+            let (x_root, y_root) = window.root_coords(x.round() as i32, y.round() as i32);
+            for kind in [EventType::ButtonPress, EventType::ButtonRelease] {
+                let mut made = gdk::Event::new(kind);
+                made.set_device(seat.as_ref().and_then(|seat| seat.pointer()).as_ref());
+                let raw: &mut gdk::ffi::GdkEventButton = made.downcast_mut::<gdk::EventButton>().expect("a button event").as_mut();
+                let state = if kind == EventType::ButtonRelease { gdk::ModifierType::BUTTON1_MASK.bits() } else { 0 };
+                (raw.window, raw.time, raw.x, raw.y, raw.button, raw.state) = (window.to_glib_full(), time, x, y, 1, state);
+                (raw.x_root, raw.y_root) = (f64::from(x_root), f64::from(y_root));
+                made.put();
+            }
+        }
+        let _ = done.send(time);
+    })?;
+    let time = put.await.map_err(|_| PageError::NoWindow)?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    Ok(json!({ "time": time }))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn person_input(_webview: &Webview<Wry>, _request: &Value) -> Result<Value, PageError> {
+    Err(PageError::NoWindow)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn watch_app_hooks(_window: &WebviewWindow<Wry>) {}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+async fn real_event(_webview: &Webview<Wry>) -> Result<Value, PageError> {
+    Err(PageError::NoWindow)
 }
 
 #[cfg(target_os = "linux")]

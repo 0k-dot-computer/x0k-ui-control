@@ -1,0 +1,21 @@
+{
+  "source": "implementation/ui-control/screencast.md",
+  "source_hash": "b51e909284e839da",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "68ec5ff9724a76e0",
+      "outputs": [
+        {
+          "path": "crates/x0k-ui-protocol/src/screencast.rs",
+          "hash": "66b65e6b0c078de8"
+        },
+        {
+          "path": "crates/x0k-ui-protocol/src/screencast/tests.rs",
+          "hash": "bf292fd96dc972ce"
+        }
+      ]
+    }
+  ]
+}

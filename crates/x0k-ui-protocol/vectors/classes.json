@@ -1,7 +1,7 @@
 {
   "clause": "ui-interfaces §1",
   "check": "operation.class",
-  "about": "The side-effect class each operation of the four UI interfaces declares. navigate, present and release are writes though they perform nothing in the world: they change what the app shows, and calling one twice leaves the app where calling it once does. The answer is {side_effect}, null for invoke, which takes the class of the action it invokes.",
+  "about": "The side-effect class each operation of the UI interfaces declares. navigate, present and release are writes though they perform nothing in the world: they change what the app shows, and calling one twice leaves the app where calling it once does. The answer is {side_effect}, null for invoke, which takes the class of the action it invokes, and for cast, which takes the highest among its run's steps.",
   "vectors": [
     {
       "name": "ui/observe.offer declares read_only",
@@ -82,6 +82,33 @@
       },
       "expect": {
         "side_effect": null
+      }
+    },
+    {
+      "name": "ui/screencast.cast has no class of its own",
+      "input": {
+        "operation": "ui/screencast.cast"
+      },
+      "expect": {
+        "side_effect": null
+      }
+    },
+    {
+      "name": "ui/screencast.frames declares read_only",
+      "input": {
+        "operation": "ui/screencast.frames"
+      },
+      "expect": {
+        "side_effect": "read_only"
+      }
+    },
+    {
+      "name": "ui/screencast.discard declares idempotent_write",
+      "input": {
+        "operation": "ui/screencast.discard"
+      },
+      "expect": {
+        "side_effect": "idempotent_write"
       }
     }
   ]

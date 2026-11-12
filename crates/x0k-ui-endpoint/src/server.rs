@@ -22,11 +22,16 @@ use x0k_ui_protocol::offer::{Action, Offer, UI_HISTORY, UI_INPUT};
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose, ReplayDisposition};
 use x0k_ui_protocol::{Refused, RefusalCode};
 
+use crate::screencast::{encode_frames, Begun, ClockEnded, FrameUnanswered, StepTo, SteppedBegin, SteppedFrame, StreamBegin, StreamedFrame};
+use crate::takeover::{HoldAnswer, HoldAsked, HoldKind, Requester, TakeoverPolicy};
 use crate::wire::{from_wire, to_wire, encode_observation, BadValue};
 use crate::{
-    shapes, HistoryAnswer, InvokeAnswer, NavigateAnswer, PerformAnswer, PresentAnswer, ReleaseAnswer, HISTORY,
-    INVOKE, NAVIGATE, OBSERVE, OFFER, PERFORM, PRESENT, RELEASE,
+    shapes, HistoryAnswer, InvokeAnswer, NavigateAnswer, PerformAnswer, PresentAnswer, ReleaseAnswer, CAST,
+    DISCARD, FRAMES, HISTORY, INVOKE, NAVIGATE, OBSERVE, OFFER, PERFORM, PRESENT, RELEASE,
 };
+
+/// How the endpoint plays a screencast: `x0k:implementation/ui-control/endpoint-screencast`.
+mod cast;
 
 /// What an app answers. Each call reaches it only after the checks passed.
 pub trait UiApp: Send + Sync + 'static {
@@ -66,9 +71,17 @@ pub trait UiApp: Send + Sync + 'static {
 
     /// Whether the person grants `requester` the takeover a sequence asks
     /// for, asked before any of the sequence runs. The endpoint asks only an
-    /// app whose offer says its host holds a takeover; a host that cannot ask
-    /// the person grants none.
+    /// app whose offer says its host holds a takeover, and only where the
+    /// host's configuration says to ask; a host that cannot ask the person
+    /// grants none.
     fn grant_takeover(&self, _requester: &str) -> impl Future<Output = bool> + Send {
+        async { false }
+    }
+
+    /// Hold the window for `requester` without asking, as the host's
+    /// configuration allows, and show the hold with its exit. False while
+    /// another takeover stands, or in a host that holds none.
+    fn hold_takeover(&self, _requester: &str) -> impl Future<Output = bool> + Send {
         async { false }
     }
 
@@ -99,8 +112,11 @@ pub trait UiApp: Send + Sync + 'static {
     }
 
     /// Show `state`, which fits the state shape, in place of the live state,
-    /// replacing any fixture that stands. Answers its handle and first frame.
-    fn present(&self, _state: Value) -> impl Future<Output = PresentAnswer> + Send {
+    /// replacing any fixture that stands, and have the host mark it over the
+    /// window while it stands unless `marked` is false, which the endpoint lets
+    /// through only for a dev instance (`ui-interfaces` §4). Answers its handle
+    /// and first frame.
+    fn present(&self, _state: Value, _marked: bool) -> impl Future<Output = PresentAnswer> + Send {
         async { PresentAnswer::Refused(no_fixtures()) }
     }
 
@@ -133,11 +149,64 @@ pub trait UiApp: Send + Sync + 'static {
         async { None }
     }
 
+    /// Why the app declines `perform`, `requester`'s sequence, for now,
+    /// whatever it shows, such as a person using the window. Asked of every
+    /// sequence after every other check and before a takeover is asked for;
+    /// the app may wait in it for its condition to pass, and the sequence then
+    /// runs whole. `None` lets it run.
+    fn declines_input(&self, _requester: &str, _perform: &Perform) -> impl Future<Output = Option<String>> + Send {
+        async { None }
+    }
+
     /// Why the app ended the fixture `handle` itself and went back to its live
     /// state, as when an approval arrives for a person (`ui-interfaces` §4).
     /// `None` while it stands, and for a fixture the app did not end.
     fn fixture_ended(&self, _handle: &str) -> impl Future<Output = Option<String>> + Send {
         async { None }
+    }
+
+    /// Begin a stepped screencast (`ui-screencast` §5): hold the app's clock
+    /// at screencast time 0, so that it moves only by `step_to`, and answer
+    /// the sources of motion it does not step. The window is already held for
+    /// `begin.requester`, by the host's configuration or the person. The
+    /// default refuses: the app offers no screencast.
+    fn stepped_begin(&self, _begin: &SteppedBegin) -> impl Future<Output = Result<Begun, Refused>> + Send {
+        async { Err(no_screencast()) }
+    }
+
+    /// Advance the app's clock to `to`, after every step due by its time took
+    /// effect, and answer the frame, with the parts `stepped_begin` named.
+    /// `Err` ends the screencast for the reason it gives, such as the person's
+    /// exit.
+    fn step_to(&self, _to: StepTo) -> impl Future<Output = Result<SteppedFrame, FrameUnanswered>> + Send {
+        async { Err(FrameUnanswered { why: no_screencast().why }) }
+    }
+
+    /// Give the app back to the wall clock, end the hold, and say whether a
+    /// rerun from the same start would draw the same frames. The endpoint
+    /// calls it after every `stepped_begin`, answered or refused.
+    fn stepped_end(&self) -> impl Future<Output = ClockEnded> + Send {
+        async { ClockEnded { same_on_rerun: false, why: vec![no_screencast().why] } }
+    }
+
+    /// Begin capturing the window as it presents, on the wall's clock
+    /// (`ui-screencast` §6). A capture the platform does not permit is refused
+    /// as `capture_not_permitted`, naming the permission and the process that
+    /// needs it. The default refuses: the app offers no screencast.
+    fn stream_begin(&self, _begin: &StreamBegin) -> impl Future<Output = Result<(), Refused>> + Send {
+        async { Err(no_screencast()) }
+    }
+
+    /// The frames the platform presented since the begin or the last take,
+    /// in order of their presentation times.
+    fn stream_take(&self) -> impl Future<Output = Vec<StreamedFrame>> + Send {
+        async { Vec::new() }
+    }
+
+    /// Stop capturing. The endpoint calls it after every `stream_begin` it
+    /// was answered.
+    fn stream_end(&self) -> impl Future<Output = ()> + Send {
+        async {}
     }
 }
 
@@ -153,6 +222,11 @@ fn no_history() -> Refused {
     Refused { code: RefusalCode::NoHistoryInterface, subject: Some(UI_HISTORY.to_string()), why }
 }
 
+fn no_screencast() -> Refused {
+    let why = "the app offers no screencast".to_string();
+    Refused { code: RefusalCode::NoScreencastInterface, subject: Some(x0k_ui_protocol::offer::UI_SCREENCAST.to_string()), why }
+}
+
 fn no_fixtures() -> Refused {
     let why = "the app takes no state fixtures".to_string();
     Refused { code: RefusalCode::NoFixtures, subject: Some(UI_HISTORY.to_string()), why }
@@ -165,18 +239,63 @@ enum Left {
     Fixture { session: Option<u64>, handle: String },
 }
 
-/// An app and the grant its connections hold.
+/// An app, the grant its connections hold, and who allows a takeover.
 pub struct Endpoint<A> {
     app: A,
     grant: Grant,
+    /// The interfaces the connections' grant holds; every one the offer
+    /// names when `None`.
+    holds: Option<Vec<String>>,
+    takeover: TakeoverPolicy,
     /// What the last session to change what the app shows left it showing.
     left: std::sync::Mutex<Option<Left>>,
     sessions: std::sync::atomic::AtomicU64,
+    /// The screencast each session holds, at most one (`ui-screencast` §2).
+    casts: cast::Casts,
 }
 
 impl<A: UiApp> Endpoint<A> {
     pub fn new(app: A, grant: Grant) -> Self {
-        Endpoint { app, grant, left: Default::default(), sessions: Default::default() }
+        Endpoint {
+            app,
+            grant,
+            holds: None,
+            takeover: TakeoverPolicy::default(),
+            left: Default::default(),
+            sessions: Default::default(),
+            casts: Default::default(),
+        }
+    }
+
+    /// Hold only `interfaces` for the connections, as their grant says
+    /// (`ui-interfaces` §1). A screencast's step needs its own interface
+    /// held. Without this, the grant holds every interface the offer names.
+    pub fn holding(mut self, interfaces: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.holds = Some(interfaces.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Answer takeovers, and stepped screencasts' holds, by `policy`.
+    pub fn with_takeover(mut self, policy: TakeoverPolicy) -> Self {
+        self.takeover = policy;
+        self
+    }
+
+    /// Whether `requester` may hold the window for `hold`, by the host's
+    /// configuration and, where it asks, the person's answer; the refusal when
+    /// not. Allowed, the app holds the window and shows it.
+    pub async fn hold_for(&self, hold: HoldKind, requester: &Requester) -> Result<(), Refused> {
+        let dev_instance = self.app.offer().await.dev_instance;
+        let asked = HoldAsked { hold, grant: &self.grant, requester, dev_instance };
+        let label = requester.to_string();
+        let why = match self.takeover.answer(&asked) {
+            HoldAnswer::Ask if self.app.grant_takeover(&label).await => return Ok(()),
+            HoldAnswer::Ask => format!("the person did not grant {label} a takeover"),
+            HoldAnswer::Allow if self.app.hold_takeover(&label).await => return Ok(()),
+            HoldAnswer::Allow => format!("the host's configuration allows {label} a takeover, and the window holds another"),
+            HoldAnswer::Refuse => format!("the host's configuration refuses {label} a takeover"),
+        };
+        Err(Refused { code: RefusalCode::TakeoverNotGranted, subject: Some(label), why })
     }
 
     fn leave(&self, left: Option<Left>) {
@@ -275,7 +394,7 @@ impl<A: UiApp> Endpoint<A> {
             Ok(state) => state,
             Err(refused) => return PresentAnswer::Refused(refused),
         };
-        let answer = self.app.present(state).await;
+        let answer = self.app.present(state, call.marked()).await;
         if let PresentAnswer::Presented { handle, .. } = &answer {
             self.leave(Some(Left::Fixture { session, handle: handle.clone() }));
         }
@@ -298,7 +417,7 @@ impl<A: UiApp> Endpoint<A> {
         answer
     }
 
-    async fn perform(&self, perform: Perform, session: Option<u64>, requester: &str) -> PerformAnswer {
+    async fn perform(&self, perform: Perform, session: Option<u64>, requester: &Requester) -> PerformAnswer {
         let offer = self.app.offer().await;
         let frames = self.app.held_frames().await;
         let resolved = match check_perform(&offer, &frames, &perform) {
@@ -323,12 +442,16 @@ impl<A: UiApp> Endpoint<A> {
                 return PerformAnswer::Refused(Refused::new(RefusalCode::Declined, UI_INPUT, why));
             }
         }
-        if perform.takeover && !self.app.grant_takeover(requester).await {
-            let why = format!("the person did not grant {requester} a takeover");
-            let refused = Refused { code: RefusalCode::TakeoverNotGranted, subject: Some(requester.to_string()), why };
-            return PerformAnswer::Refused(refused);
+        let label = requester.to_string();
+        if let Some(why) = self.app.declines_input(&label, &perform).await {
+            return PerformAnswer::Refused(Refused::new(RefusalCode::Declined, UI_INPUT, why));
         }
-        PerformAnswer::Done { frame: self.app.perform_for(requester, perform, resolved).await }
+        if perform.takeover {
+            if let Err(refused) = self.hold_for(HoldKind::Takeover, requester).await {
+                return PerformAnswer::Refused(refused);
+            }
+        }
+        PerformAnswer::Done { frame: self.app.perform_for(&label, perform, resolved).await }
     }
 
     async fn history(&self, call: HistoryCall) -> HistoryAnswer {
@@ -353,6 +476,7 @@ impl<A: UiApp> Endpoint<A> {
     /// Take the app back to live if `session` left it at a past position or
     /// showing a fixture.
     async fn session_ended(&self, session: u64) {
+        self.casts.drop_session(Some(session));
         let left = self.left.lock().ok().and_then(|mut left| {
             let ours = match &*left {
                 Some(Left::Past { session: by }) => *by == session,
@@ -374,7 +498,7 @@ impl<A: UiApp> Endpoint<A> {
         }
     }
 
-    async fn answer(&self, heard: &Heard, session: Option<u64>, requester: &str) -> Result<Datum, BadValue> {
+    async fn answer(&self, heard: &Heard, session: Option<u64>, requester: &Requester) -> Result<Datum, BadValue> {
         match heard.operation.as_str() {
             OFFER => to_wire(&self.app.offer().await),
             OBSERVE => encode_observation(&self.observe(from_wire(&heard.argument)?).await),
@@ -384,11 +508,14 @@ impl<A: UiApp> Endpoint<A> {
             NAVIGATE => to_wire(&self.navigate(from_wire(&heard.argument)?, session).await),
             PRESENT => to_wire(&self.present(from_wire(&heard.argument)?, session).await),
             RELEASE => to_wire(&self.release(from_wire(&heard.argument)?).await),
+            CAST => to_wire(&self.cast(from_wire(&heard.argument)?, session, requester).await),
+            FRAMES => encode_frames(&self.frames(from_wire(&heard.argument)?)),
+            DISCARD => to_wire(&self.discard(from_wire(&heard.argument)?)),
             other => Err(BadValue(format!("the endpoint serves no operation {other}"))),
         }
     }
 
-    async fn call_in(&self, heard: Heard, session: Option<u64>, requester: &str) -> Answer {
+    async fn call_in(&self, heard: Heard, session: Option<u64>, requester: &Requester) -> Answer {
         let span = tracing::info_span!(
             "ui.call",
             operation = %heard.operation,
@@ -403,7 +530,7 @@ impl<A: UiApp> Endpoint<A> {
 
 impl<A: UiApp> Callee for Endpoint<A> {
     async fn call(&self, heard: Heard) -> Answer {
-        self.call_in(heard, None, UNNAMED).await
+        self.call_in(heard, None, &Requester::default()).await
     }
 }
 
@@ -419,7 +546,7 @@ fn outcome_answer(outcome: Outcome) -> InvokeAnswer {
 struct Connection<A> {
     endpoint: Arc<Endpoint<A>>,
     session: u64,
-    requester: String,
+    requester: Requester,
 }
 
 impl<A: UiApp> Callee for Connection<A> {
@@ -447,11 +574,11 @@ where
     S: AsyncRead + AsyncWrite + Send + 'static,
     A: UiApp,
 {
-    serve_connection_from(stream, endpoint, UNNAMED.to_string()).await
+    serve_connection_from(stream, endpoint, Requester::default()).await
 }
 
 /// Serve one connection until it ends, its calls made by `requester`.
-pub async fn serve_connection_from<S, A>(stream: S, endpoint: Arc<Endpoint<A>>, requester: String) -> Result<(), ServeFault>
+pub async fn serve_connection_from<S, A>(stream: S, endpoint: Arc<Endpoint<A>>, requester: Requester) -> Result<(), ServeFault>
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
     A: UiApp,
@@ -503,13 +630,14 @@ pub async fn serve_listener<A: UiApp>(
 }
 
 /// The requester of a connection on a local socket: its peer's credentials
-/// (`ui-interfaces` §6), as the kernel gave them when it connected.
-pub fn requester(stream: &tokio::net::UnixStream) -> String {
+/// (`ui-interfaces` §6), as the kernel gave them when it connected. A peer
+/// whose credentials cannot be read names none.
+pub fn requester(stream: &tokio::net::UnixStream) -> Requester {
     match stream.peer_cred() {
-        Ok(peer) => match peer.pid() {
-            Some(pid) => format!("uid {} pid {pid}", peer.uid()),
-            None => format!("uid {}", peer.uid()),
-        },
-        Err(error) => format!("unknown: {error}"),
+        Ok(peer) => Requester::peer(peer.uid(), peer.pid().and_then(|pid| u32::try_from(pid).ok())),
+        Err(error) => {
+            tracing::debug!(%error, "ui endpoint: a connection's peer credentials could not be read");
+            Requester::default()
+        }
     }
 }

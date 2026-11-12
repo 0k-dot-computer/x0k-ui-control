@@ -16,6 +16,7 @@ pub mod offer;
 pub mod page;
 pub mod presentation;
 pub mod replay;
+pub mod screencast;
 pub mod shapes;
 
 use serde::{Deserialize, Serialize};
@@ -28,8 +29,13 @@ pub enum RefusalCode {
     /// `ui/act`: the offer lists no such action.
     UnknownAction,
     /// `ui/act`: the grant does not cover the action's side-effect class.
+    /// `ui/screencast`: the grant does not hold the interface a step's
+    /// operation belongs to, or `ui/screencast` itself.
     OutsideGrant,
     /// `ui/act`: the arguments do not fit the action's shape.
+    /// `ui/screencast`: a cast whose arguments do not fit what the offer
+    /// answers: a run past its bounds, a frame rate outside 1 to 240, or steps
+    /// out of time order.
     MisfitArguments,
     /// `ui/act`: the offer spells a shape that cannot be read.
     UnreadableShape,
@@ -81,11 +87,26 @@ pub enum RefusalCode {
     /// cannot paint its window now, so no frame would show.
     CannotPaint,
     /// `ui/history`'s `present`, and `ui/act` or `ui/input` while a fixture
-    /// stands: the app declines the call for now, for the reason it gives.
+    /// stands, and `ui/input` at any time: the app declines the call for
+    /// now, for the reason it gives.
     Declined,
     /// `ui/act`, `ui/input`: the app ended the fixture the session presented,
     /// for the reason it gives, and shows its live state.
     FixtureEnded,
+    /// `ui/screencast`: a handle the endpoint does not hold: never cast,
+    /// discarded, replaced by its session's next cast, or its session ended.
+    UnknownScreencast,
+    /// `ui/screencast`: the platform does not permit the capture a streamed
+    /// screencast needs, naming the permission and the process that needs it.
+    CaptureNotPermitted,
+    /// `ui/history`'s `present`, and a screencast's `present` step: `mark:
+    /// false` asked of an instance that is not a dev instance.
+    MarkRequired,
+    /// `ui/screencast`: the offer does not name `ui/screencast`.
+    NoScreencastInterface,
+    /// `ui/screencast`: a cast names a clock the offer does not list, or
+    /// `sampled`, which no app offers.
+    UnofferedClock,
 }
 
 /// A call refused before anything ran.

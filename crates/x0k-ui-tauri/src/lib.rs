@@ -12,11 +12,17 @@ mod input;
 #[path = "input_macos.rs"]
 mod input;
 mod page;
+mod provenance;
 #[cfg(target_os = "linux")]
 mod snapshot;
 #[cfg(target_os = "macos")]
 #[path = "snapshot_macos.rs"]
 mod snapshot;
+#[cfg(target_os = "linux")]
+mod takeover;
+#[cfg(target_os = "macos")]
+#[path = "takeover_macos.rs"]
+mod takeover;
 #[cfg(target_os = "macos")]
 #[path = "painting_macos.rs"]
 mod painting;
@@ -30,6 +36,11 @@ mod painting {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use endpoint::{PageApp, HELD_FRAMES, UI_GLOBAL};
 pub use held::{held_capture, Held, HeldCapture, HoldingHost, Refused, HOLD_TRIES};
-pub use page::{endpoint_socket_path, ui_plugin, ui_plugin_at, ui_plugin_with, CoveredPainting, PageError, PageHold, PageHost, Pending, PAGE_GLOBAL, PAGE_SCRIPT, PLUGIN};
+pub use page::{endpoint_socket_path, ui_plugin, ui_plugin_at, ui_plugin_with, CoveredPainting, PageError, PageHold, PageHost, Pending, UiPlugin, PAGE_GLOBAL, PAGE_SCRIPT, PLUGIN};
+pub use provenance::{last_delivered, resume_input, AskedInput, DeliveredInput, InputTurn};
+/// The protocol's values a host reads: a told event is its `input::Event`.
+pub use x0k_ui_protocol as protocol;
+/// The host's configuration of who allows a takeover, which `UiPlugin::takeover` takes.
+pub use x0k_ui_endpoint::takeover::{HoldAnswer, HoldKind, HoldMatch, HoldRule, TakeoverPolicy};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use snapshot::Snapshot;

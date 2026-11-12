@@ -75,6 +75,10 @@ and `counter.fail`, which throws.
   the page cannot paint"). It waits on nothing. A host asks it before an
   action, and refuses the action as `cannot_paint` (`ui-control-channel` §8
   to §10).
+- While the stepped clock steps (`x0k:implementation/ui-control/page-clock`),
+  `invoke`, `present` and `release` answer once the page's hook has run,
+  without a rendering update: the page's next frame is the one its host's
+  next step draws, and the frame they name is the epoch as it stands.
 - `invoke`, `present` and `release` never wait on a frame that cannot come:
   a page hidden or not painting answers at once with no frame and the reason,
   `unpainted`, and its host's next call is refused as `cannot_paint`.
@@ -398,7 +402,15 @@ fixture stands. A driver's `ui/act` calls are answered by the app's replay
 policy at the endpoint before the page hears them, but a person's click, or
 the page's own code, runs inside the page, where only the page can stop it.
 `ui.onFixture(listener)` lets a part of the page that holds no hook hear the
-fixture stand and end.
+fixture stand and end. The host's drawing layer hears it first, so the host's
+fixture mark leaves the page with the fixture however the fixture ends
+(`x0k:implementation/ui-control/page-hold`, "The host's drawing layer").
+
+A page draws no banner of its own for a fixture. Its host marks the window
+while one stands, outside the page's frame (`x0k:architecture/ui-interfaces`
+§4), so a capture of the frame alone shows the page as it will look, and the
+person at the window still sees the mark. A banner the page drew would be in
+every frame, a stepped screencast's included.
 
 An app with a store, in outline. Its `read` reads the store it draws from,
 its hooks swap that store and stop what writes into it, and the one function
@@ -419,7 +431,6 @@ async function daemonRpc(method, params) {
   if (ui.fixture()) return simulated(method, params);
   return invoke('daemon_rpc', { method, params });
 }
-ui.onFixture((handle) => banner.show(handle ? 'showing a fixture' : null));
 ```
 
 An app may decline for now, with its own reason. Chariot declines while an
@@ -483,11 +494,13 @@ const showingNow = () => readNow(!standing);
 /** What the page shows, as an observation names it. */
 const shownNow = (): Shown => (standing ? { kind: 'fixture', handle: standing.handle } : { kind: 'live' });
 const fixture = () => standing?.handle ?? null;
-/** Stand `next`, and tell the page's listeners when the handle changed. */
+/** Stand `next`, and tell the host's drawing layer and the page's listeners
+ * when the handle changed. */
 const stand = (next: typeof standing) => {
   const was = fixture();
   standing = next;
   if (fixture() === was) return;
+  hold.drawn.standing(fixture());
   for (const listener of [...listeners]) {
     try { listener(fixture()); } catch (e) { win.setTimeout(() => { throw e; }); }
   }

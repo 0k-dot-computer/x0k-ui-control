@@ -28,6 +28,16 @@ runs. Anything else an action would do to the world is simulated, or sent to a
 sandbox the app names, and the answer says which. `release` shows the live state
 again, and so does the end of the driver's session. The offer says how deeply the
 app can be looked into, and what its actions do while a state like this stands.
+While a given state stands, the host marks its window with a band at the foot, so
+a person at the window can tell it is not the live one.
+
+A screenshot shows where a motion ended; a screencast shows the motion. `cast`
+plays a run of timed steps, the same invoke, perform, present and release, at a
+frame rate, and keeps every frame for the driver to read with `frames`. An app
+that steps its own clock draws frame *n* at exactly its time, however slowly it
+renders, so two runs of one cast give the same frames, and a cast can be checked
+the way a test checks a value. The Tauri plugin steps the clock of its page: its
+animations, transitions, timers and `Date`.
 
 Two hosts answer it today: x0k's own shell, which passes every check in the
 conformance suite here, and the Tauri plugin in this repository, which answers for
@@ -106,8 +116,10 @@ suite, and no Rust API, so a crate of yours pinned to this one may have to chang
 
 What an app and a driver may rely on is written down in sections 7 to 10 of
 [the protocol decision](decisions/architecture/surfaces/ui-control-channel.md),
-and for history and given states in sections 1 to 5 of
-[the interfaces decision](decisions/architecture/surfaces/ui-interfaces.md).
+for history and given states in sections 1 to 5 of
+[the interfaces decision](decisions/architecture/surfaces/ui-interfaces.md),
+and for screencasts in sections 2 to 6 and 9 of
+[the screencast decision](decisions/architecture/surfaces/ui-screencast.md).
 The suite and the vectors name those sections. The rest of the interfaces decision,
 such as edges for apps that do not speak the protocol, is not built yet.
 
@@ -128,6 +140,7 @@ The values an app and a driver exchange, the endpoint that carries them, and the
 
 - [x0k-ui-protocol: the values of the UI-control endpoint](implementation/ui-control/protocol.md) — x0k-ui-protocol: what an app and a driver say to each other over the UI-control endpoint (an offer, one observation, an action, a sequence of input, the app's history), and the checks the decisions make before an app runs anything, with conformance vectors any language can run.
 - [x0k-ui-endpoint: an app's end and a driver's end of the UI-control endpoint](implementation/ui-control/endpoint.md) — x0k-ui-endpoint: the UI-control endpoint over the operation wire. An app implements its calls, the endpoint routes them and refuses a bad one before the app hears it, and a driver calls them through a client.
+- [Who allows a takeover: a host's configuration of its endpoint](implementation/ui-control/takeover.md) — x0k-ui-endpoint's takeover configuration: a list of rules and a default answer (ask, allow, refuse) that decides whether a driver's takeover, or a stepped screencast's hold, asks the person, holds without asking or is refused; one value every host builds its endpoint with.
 - [The endpoint over a WebSocket](implementation/ui-control/websocket.md) — The UI-control endpoint's frames over a WebSocket, as a byte stream either side can dial, so an app in a browser or a webview answers exactly as one on a unix socket does.
 - [The conformance suite, over the endpoint](implementation/ui-control/conformance.md) — The UI-control suite as a program: pointed at an app's socket, it holds the app to ui-control-channel §8 to §10 and ui-interfaces §2 to §5 over the endpoint alone, so any app in any language runs it against itself.
 
@@ -149,7 +162,15 @@ The library a page answers with, the design it follows, and the plugin that serv
 - [The page's hold: one page state for one capture](implementation/ui-control/page-hold.md) — The in-page library's hold and epoch: a page names its frame by an epoch that rises whenever its state may have changed, and holds its own frame producers still while its host captures, so the capture and the read come from one page state. A probe page test holds this in headless Chromium over CDP and in WebKitGTK, and is red without the hold.
 - [The page's answers: offer, observe and invoke](implementation/ui-control/page-answer.md) — The in-page library's entry: a page installs the library with its app name and its state, declares its named actions, and hands its host what it declared, what it reads and the run of an action, raw. The host makes the protocol's values: the offer, the state part and the checks, with x0k-ui-protocol's page module, natively in a Rust host and through x0k-ui-protocol-wasm in a JavaScript one. A page that gives present and release hooks takes state fixtures: the library keeps the fixture's handle and the live state as it stood, answers what the page shows while a fixture stands, and lets the page's own code ask whether one stands and hear it change, while the fixture checks stay its host's. The page loads no WebAssembly, so a page whose content security policy forbids it answers every call. A test runs the conformance suite itself against the page in WebKitGTK and headless Chromium, through a JSON-lines link, on a page that allows WebAssembly and on one that forbids it.
 - [The checks for a host in JavaScript](implementation/ui-control/page-checks.md) — x0k-ui-protocol's page module as a WebAssembly module, x0k-ui-protocol-wasm: a page's offer, its state part and the checks, as one JSON request and one JSON answer through three exported functions, for a host in JavaScript of a web page that answers the UI-control protocol. The page itself never loads it.
-- [The Tauri plugin: a Tauri app's page, held and captured](implementation/ui-control/tauri-plugin.md) — A Tauri 2 plugin that is the host of the webview design for a Tauri app on Linux and macOS: it injects the in-page library's hold before the page's scripts, asks the page over Tauri's IPC with a fresh nonce per request and drops any answer without it, and takes the capture natively while the page is held, with webkit_web_view_get_snapshot on Linux and WKWebView's takeSnapshot on macOS. It puts input into the page through the platform's own input path, as GDK events synthesized for the webview's widget on Linux and as NSEvents handed to the WKWebView on macOS, so the page's hit-testing and focus decide the target and its events are trusted. It serves the page as the app's UI-control endpoint with x0k-ui-endpoint, whose checks run before the page hears a call, and forwards a state fixture's present and release to the page's own hooks, answering the first frame painted after each, on a socket named for the app in its profile's runtime directory by the rule every endpoint binds by, so a scratch app never binds in the live runtime. The library's probe test, an input test and the conformance suite over the endpoint hold it against a minimal Tauri app, under Xvfb on Linux and in a window on the Mac's display.
+- [The Tauri plugin: a Tauri app's page, held and captured](implementation/ui-control/tauri-plugin.md) — A Tauri 2 plugin that is the host of the webview design for a Tauri app on Linux and macOS: it injects the in-page library's hold before the page's scripts, asks the page over Tauri's IPC with a fresh nonce per request and drops any answer without it, and takes the capture natively while the page is held, with webkit_web_view_get_snapshot on Linux and WKWebView's takeSnapshot on macOS. It puts input into the page through the platform's own input path, as GDK events synthesized for the webview's widget on Linux and as NSEvents handed to the WKWebView on macOS, so the page's hit-testing and focus decide the target and its events are trusted. It serves the page as the app's UI-control endpoint with x0k-ui-endpoint, whose checks run before the page hears a call, and forwards a state fixture's present and release to the page's own hooks, answering the first frame painted after each, on a socket named for the app in its profile's runtime directory by the rule every endpoint binds by, so a scratch app never binds in the live runtime. It answers a driver's takeover by the host's configuration, asking the person in the page, holding at once or refusing, and while one stands holds the person's own input back from the page until they press Escape. It answers a stepped screencast: for each frame it advances the library's stepped clock to the frame's time and captures the held page natively, so a Tauri app's screencast of one run is the same on every run and at every frame rate. The library's probe test, an input test and the conformance suite over the endpoint hold it against a minimal Tauri app, under Xvfb on Linux and in a window on the Mac's display.
+
+### Screencasts
+
+The values of a cast, the endpoint that plays one, and the clock a page steps so every frame lands at its own time.
+
+- [A screencast: the values of ui/screencast and the checks before anything plays](implementation/ui-control/screencast.md) — x0k-ui-protocol's ui/screencast: cast a run of timed invoke, perform, present and release steps at a frame rate, read chosen frames of the screencast the endpoint holds, and discard it; the offer's screencast field; the frame each step first shows in; the rows and their trace hash; and the checks that refuse a cast by name before anything plays, held to conformance vectors.
+- [The endpoint plays a screencast: the hold, the run, the frames, and the app's hooks](implementation/ui-control/endpoint-screencast.md) — x0k-ui-endpoint answers ui/screencast: it checks a cast before anything plays, asks the host's takeover configuration for a stepped cast's hold, plays the run's timed steps through the endpoint's own calls, draws each frame through the app's stepped or streamed hooks, ends the screencast when it settles, reaches its longest time or a step is refused, and holds one screencast per session for frames and discard.
+- [The page's stepped clock: one screencast time for every source of motion](implementation/ui-control/page-clock.md) — The in-page library's stepped clock: a screencast time the host advances by one frame per frame, which every Web Animation, CSS transition, animation-frame callback, timer, performance.now, Date and SVG animation of the page follows, with the page's fetches and IPC counted as work a frame waits for within a bound, so a stepped run draws the same frames on a rerun, at any frame rate and under any load. A probe page test holds this in WebKitGTK and headless Chromium, and is red with one timer the clock does not step.
 
 ### Where an endpoint lives
 

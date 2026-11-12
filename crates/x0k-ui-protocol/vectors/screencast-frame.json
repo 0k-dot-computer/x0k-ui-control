@@ -1,0 +1,97 @@
+{
+  "clause": "ui-screencast §4",
+  "check": "screencast.frame",
+  "about": "Frame n is drawn at n × 1000 / fps ms from the run's start, and a step at t ms takes effect before the first frame whose time is t or later. The input is the step's time and the frame rate; the answer is {frame}.",
+  "vectors": [
+    {
+      "name": "a step at 100 ms first shows in frame 6 at 60 fps",
+      "input": {
+        "at_ms": 100,
+        "fps": 60
+      },
+      "expect": {
+        "frame": 6
+      }
+    },
+    {
+      "name": "a step at 100 ms first shows in frame 12 at 120 fps",
+      "input": {
+        "at_ms": 100,
+        "fps": 120
+      },
+      "expect": {
+        "frame": 12
+      }
+    },
+    {
+      "name": "a step at 0 ms shows in frame 0",
+      "input": {
+        "at_ms": 0,
+        "fps": 60
+      },
+      "expect": {
+        "frame": 0
+      }
+    },
+    {
+      "name": "a step just after frame 6's time waits for frame 7",
+      "input": {
+        "at_ms": 101,
+        "fps": 60
+      },
+      "expect": {
+        "frame": 7
+      }
+    },
+    {
+      "name": "a step at 16 ms shows in frame 1 (16.7 ms)",
+      "input": {
+        "at_ms": 16,
+        "fps": 60
+      },
+      "expect": {
+        "frame": 1
+      }
+    },
+    {
+      "name": "a step at 17 ms, after frame 1's time, waits for frame 2",
+      "input": {
+        "at_ms": 17,
+        "fps": 60
+      },
+      "expect": {
+        "frame": 2
+      }
+    },
+    {
+      "name": "a record script's event at frame 7 at 60 fps, at floor(7000 / 60) = 116 ms, lands before frame 7",
+      "input": {
+        "at_ms": 116,
+        "fps": 60
+      },
+      "expect": {
+        "frame": 7
+      }
+    },
+    {
+      "name": "at 1 fps a step at 1000 ms shows in frame 1",
+      "input": {
+        "at_ms": 1000,
+        "fps": 1
+      },
+      "expect": {
+        "frame": 1
+      }
+    },
+    {
+      "name": "at 1 fps a step at 999 ms shows in frame 1",
+      "input": {
+        "at_ms": 999,
+        "fps": 1
+      },
+      "expect": {
+        "frame": 1
+      }
+    }
+  ]
+}

@@ -1,11 +1,12 @@
 {
   "schema": "x0k.provenance/v1",
   "publication_uri": "x0k:publication/x0k-ui-control",
-  "corpus_rev": "omqksswkqxvrwlmpmnmqxnlktzpkorrt",
-  "corpus_commit": "450e7b295aee31a0a00b8ab8016f377597e72390",
+  "corpus_rev": "nmqpsowwklktunxtxqnpmnmmvvkptpql",
+  "corpus_commit": "51738870a196b1fe37a33561f0463875572e1c3c",
   "path_map": {
     "decisions/architecture/surfaces/ui-control-channel.md": "corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md",
     "decisions/architecture/surfaces/ui-interfaces.md": "corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md",
+    "decisions/architecture/surfaces/ui-screencast.md": "corpora/x0k/decisions/architecture/surfaces/ui-screencast.md",
     "implementation/sync/operation-session.md": "corpora/x0k/implementation/sync/operation-session.md",
     "implementation/sync/operation-wire-anywhere.md": "corpora/x0k/implementation/sync/operation-wire-anywhere.md",
     "implementation/sync/operation-wire.md": "corpora/x0k/implementation/sync/operation-wire.md",
@@ -13,12 +14,16 @@
     "implementation/tooling/runtime-dir.md": "corpora/x0k/implementation/tooling/runtime-dir.md",
     "implementation/tooling/test-process.md": "corpora/x0k/implementation/tooling/test-process.md",
     "implementation/ui-control/conformance.md": "corpora/x0k/implementation/ui-control/conformance.md",
+    "implementation/ui-control/endpoint-screencast.md": "corpora/x0k/implementation/ui-control/endpoint-screencast.md",
     "implementation/ui-control/endpoint.md": "corpora/x0k/implementation/ui-control/endpoint.md",
     "implementation/ui-control/page-answer.md": "corpora/x0k/implementation/ui-control/page-answer.md",
     "implementation/ui-control/page-checks.md": "corpora/x0k/implementation/ui-control/page-checks.md",
+    "implementation/ui-control/page-clock.md": "corpora/x0k/implementation/ui-control/page-clock.md",
     "implementation/ui-control/page-hold.md": "corpora/x0k/implementation/ui-control/page-hold.md",
     "implementation/ui-control/page-walk.md": "corpora/x0k/implementation/ui-control/page-walk.md",
     "implementation/ui-control/protocol.md": "corpora/x0k/implementation/ui-control/protocol.md",
+    "implementation/ui-control/screencast.md": "corpora/x0k/implementation/ui-control/screencast.md",
+    "implementation/ui-control/takeover.md": "corpora/x0k/implementation/ui-control/takeover.md",
     "implementation/ui-control/tauri-plugin.md": "corpora/x0k/implementation/ui-control/tauri-plugin.md",
     "implementation/ui-control/websocket.md": "corpora/x0k/implementation/ui-control/websocket.md",
     "implementation/ui-control/webview.md": "corpora/x0k/implementation/ui-control/webview.md"
@@ -65,12 +70,16 @@
     "implementation/tooling/runtime-dir.md",
     "implementation/tooling/test-process.md",
     "implementation/ui-control/conformance.md",
+    "implementation/ui-control/endpoint-screencast.md",
     "implementation/ui-control/endpoint.md",
     "implementation/ui-control/page-answer.md",
     "implementation/ui-control/page-checks.md",
+    "implementation/ui-control/page-clock.md",
     "implementation/ui-control/page-hold.md",
     "implementation/ui-control/page-walk.md",
     "implementation/ui-control/protocol.md",
+    "implementation/ui-control/screencast.md",
+    "implementation/ui-control/takeover.md",
     "implementation/ui-control/tauri-plugin.md",
     "implementation/ui-control/websocket.md",
     "implementation/ui-control/webview.md"
@@ -80,7 +89,8 @@
   "severed": [],
   "documents": {
     "x0k:architecture/ui-control-channel": "decisions/architecture/surfaces/ui-control-channel.md",
-    "x0k:architecture/ui-interfaces": "decisions/architecture/surfaces/ui-interfaces.md"
+    "x0k:architecture/ui-interfaces": "decisions/architecture/surfaces/ui-interfaces.md",
+    "x0k:architecture/ui-screencast": "decisions/architecture/surfaces/ui-screencast.md"
   },
   "modules": [],
   "modules_dir": null,

@@ -3,26 +3,31 @@
 //! made of what the page declares, reads and runs over the plugin's IPC.
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Instant;
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use tauri::{Runtime, Webview};
+use tauri::{Manager, Runtime, Webview};
 use tracing::Instrument;
 use x0k_datum::Datum;
+use x0k_ui_endpoint::screencast::{Begun, ClockEnded, FrameUnanswered, StepTo, SteppedBegin, SteppedFrame};
 use x0k_ui_endpoint::server::{bind_path, requester, serve_connection_from, Declinable, Endpoint, UiApp, UNNAMED};
+use x0k_ui_endpoint::takeover::TakeoverPolicy;
 use x0k_ui_protocol::act::{Grant, Outcome};
 use x0k_ui_protocol::fixture::{PresentAnswer, ReleaseAnswer};
 use x0k_ui_protocol::history::{Destination, History, HistoryCall, HistoryOffer, NavigateAnswer, Shown};
 use x0k_ui_protocol::input::{HeldFrame, InputOffer, Perform, Resolved, Step, Target};
 use x0k_ui_protocol::observe::{LayoutNode, Observation, ObserveCall, Part, PartRefused, StatePart};
-use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY, UI_INPUT};
+use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY, UI_INPUT, UI_SCREENCAST};
 use x0k_ui_protocol::page::{page_offer, state_part, Declared, DeclaredState};
+use x0k_ui_protocol::screencast::{Clock, FramePart, ScreencastOffer};
 use x0k_ui_protocol::shapes::{interface, interfaces};
 use x0k_ui_protocol::{Refused, RefusalCode};
 
 use crate::held::{held_capture, HOLD_TRIES};
 use crate::page::{PageError, PageHold, PageHost, PAGE_GLOBAL};
+use crate::provenance::{AskedInput, Provenance};
 
 /// How many observed frames input may still name, as the shell keeps.
 pub const HELD_FRAMES: usize = 8;
@@ -47,6 +52,12 @@ pub struct PageApp<R: Runtime> {
     input_turn: tokio::sync::Mutex<()>,
     /// The spelling of the page's state shape, as it last declared it.
     shape: Mutex<Option<Datum>>,
+    /// The sources of motion the library's stepped clock does not step, once read.
+    unstepped: OnceLock<Vec<String>>,
+    /// The stepped screencast that plays, while one does.
+    casting: Mutex<Option<Casting>>,
+    /// Whether the app runs as a dev instance, as it said when it started.
+    dev_instance: bool,
 }
 
 /// What the page declares: the protocol's `Declared`, and beside it whether
@@ -82,7 +93,29 @@ fn observed_script(held_json: &str, call_json: &str) -> String {
 
 impl<R: Runtime> PageApp<R> {
     pub fn new(webview: Webview<R>) -> Self {
-        Self { page: PageHost::new(webview), kept: Mutex::default(), input_turn: tokio::sync::Mutex::new(()), shape: Mutex::default() }
+        Self {
+            page: PageHost::new(webview),
+            kept: Mutex::default(),
+            input_turn: tokio::sync::Mutex::new(()),
+            shape: Mutex::default(),
+            unstepped: OnceLock::new(),
+            casting: Mutex::default(),
+            dev_instance: false,
+        }
+    }
+
+    /// The same app, saying in its offer whether it runs as a dev instance.
+    pub fn dev_instance(self, dev_instance: bool) -> Self {
+        Self { dev_instance, ..self }
+    }
+
+    /// Drop the fixture mark when the page shows anything but the fixture it
+    /// marks, as after the page ended that fixture itself.
+    fn unmark_unless(&self, shown: Option<&Shown>) {
+        let Some(marked) = self.page.fixture_mark() else { return };
+        if !matches!(shown, Some(Shown::Fixture { handle }) if *handle == marked) {
+            self.page.mark_fixture(None);
+        }
     }
 
     /// What the page declares now. Its state's shape is kept, for the
@@ -106,8 +139,9 @@ impl<R: Runtime> PageApp<R> {
     }
 
     /// One observation: the library's read for `call` held around the native
-    /// capture, built into the answer by the library's `observation`.
-    async fn observed(&self, call: &ObserveCall) -> Result<Observation, PageError> {
+    /// capture, built into the answer by the library's `observation`. With
+    /// `keep`, input may name its frame.
+    async fn observed(&self, call: &ObserveCall, keep: bool) -> Result<Observation, PageError> {
         let malformed = |e: serde_json::Error| PageError::Malformed(e.to_string());
         let call_json = serde_json::to_string(call).map_err(malformed)?;
         let read = format!("globalThis.{UI_GLOBAL}.read({call_json})");
@@ -124,12 +158,15 @@ impl<R: Runtime> PageApp<R> {
             observation.refused.retain(|refused| refused.part != Part::Capture);
             observation.refused.push(PartRefused { part: Part::Capture, code: None, why });
         }
+        self.unmark_unless(observation.shown.as_ref());
         if let Some(snapshot) = &held.capture {
             if let Some(capture) = observation.capture.as_mut() {
                 (capture.png, capture.presented) = (snapshot.png.clone(), self.page.presents(call.frame_only));
             }
-            let frame = HeldFrame { frame: held.frame.clone(), width: snapshot.width, height: snapshot.height, layout };
-            self.keep(Kept { frame, scale: snapshot.scale });
+            if keep {
+                let frame = HeldFrame { frame: held.frame.clone(), width: snapshot.width, height: snapshot.height, layout };
+                self.keep(Kept { frame, scale: snapshot.scale });
+            }
         }
         Ok(observation)
     }
@@ -157,8 +194,13 @@ impl<R: Runtime> UiApp for PageApp<R> {
                 let history = interface(UI_HISTORY).filter(|_| fixtures);
                 let mut offer = page_offer(declared);
                 offer.interfaces.extend(input.chain(history));
-                offer.input = Some(InputOffer { presents: true, takeover: false });
+                offer.input = Some(InputOffer { presents: true, takeover: true });
                 offer.history = fixtures.then_some(HistoryOffer { oldest: None, newest: None, fixtures: true });
+                if let Some(unstepped) = self.unstepped().await {
+                    offer.interfaces.extend(interface(UI_SCREENCAST));
+                    offer.screencast = Some(ScreencastOffer { clocks: vec![Clock::Stepped], max_frames: MAX_CAST_FRAMES, max_ms: MAX_CAST_MS, unstepped });
+                }
+                offer.dev_instance = self.dev_instance;
                 offer
             }
             Err(error) => {
@@ -169,7 +211,7 @@ impl<R: Runtime> UiApp for PageApp<R> {
     }
 
     async fn observe(&self, call: ObserveCall) -> Observation {
-        match self.observed(&call).await {
+        match self.observed(&call, true).await {
             Ok(observation) => observation,
             Err(error) => {
                 let why = error.to_string();
@@ -188,14 +230,16 @@ impl<R: Runtime> UiApp for PageApp<R> {
     }
 
     async fn shown(&self) -> Shown {
-        match self.ask::<Option<String>>("fixture()").await {
+        let shown = match self.ask::<Option<String>>("fixture()").await {
             Ok(Some(handle)) => Shown::Fixture { handle },
             Ok(None) => Shown::Live,
             Err(error) => {
                 tracing::warn!(%error, "ui_tauri.endpoint.shown_unanswered");
-                Shown::Live
+                return Shown::Live;
             }
-        }
+        };
+        self.unmark_unless(Some(&shown));
+        shown
     }
 
     async fn history(&self, _call: HistoryCall) -> History {
@@ -232,9 +276,14 @@ impl<R: Runtime> UiApp for PageApp<R> {
         }
     }
 
-    async fn present(&self, state: Value) -> PresentAnswer {
+    async fn present(&self, state: Value, marked: bool) -> PresentAnswer {
         match self.ask::<PresentAnswer>(&format!("present({state})")).await {
-            Ok(answer) => answer,
+            Ok(answer) => {
+                if let PresentAnswer::Presented { handle, .. } = &answer {
+                    self.page.mark_fixture(marked.then_some(handle.as_str()));
+                }
+                answer
+            }
             Err(error) => {
                 let code = if matches!(error, PageError::Threw(_)) { RefusalCode::MisfitState } else { RefusalCode::NoFixtures };
                 PresentAnswer::Refused(Refused { code, subject: Some(UI_HISTORY.to_string()), why: error.to_string() })
@@ -244,7 +293,12 @@ impl<R: Runtime> UiApp for PageApp<R> {
 
     async fn release(&self, handle: String) -> ReleaseAnswer {
         match self.ask::<ReleaseAnswer>(&format!("release({})", json!(handle))).await {
-            Ok(answer) => answer,
+            Ok(answer) => {
+                if !matches!(answer, ReleaseAnswer::Refused(_)) && self.page.fixture_mark().as_deref() == Some(handle.as_str()) {
+                    self.page.mark_fixture(None);
+                }
+                answer
+            }
             Err(error) => ReleaseAnswer::Refused(Refused { code: RefusalCode::NoFixtures, subject: Some(handle), why: error.to_string() }),
         }
     }
@@ -268,21 +322,19 @@ impl<R: Runtime> UiApp for PageApp<R> {
     }
 
     async fn perform_for(&self, requester: &str, perform: Perform, resolved: Vec<Resolved>) -> Option<String> {
-        let scale = match scale_for(&perform, &self.kept()) {
-            Ok(scale) => scale,
-            Err(why) => {
-                tracing::warn!(%why, "ui_tauri.endpoint.input_undelivered");
-                return None;
-            }
-        };
-        let _turn = self.input_turn.lock().await;
-        match self.page.perform(requester, &perform, &resolved, scale).await {
-            Ok(epoch) => epoch.map(|epoch| epoch.to_string()),
-            Err(error) => {
-                tracing::warn!(%error, "ui_tauri.endpoint.input_undelivered");
-                None
-            }
+        let frame = self.delivered(requester, &perform, &resolved).await;
+        if perform.takeover {
+            self.page.end_takeover(requester);
         }
+        frame
+    }
+
+    async fn hold_takeover(&self, requester: &str) -> bool {
+        self.page.hold_takeover(requester).await
+    }
+
+    async fn grant_takeover(&self, requester: &str) -> bool {
+        self.page.ask_takeover(requester).await
     }
 
     async fn cannot_paint(&self) -> Option<String> {
@@ -291,6 +343,14 @@ impl<R: Runtime> UiApp for PageApp<R> {
 
     fn delivers(&self) -> &[&str] {
         crate::input::DELIVERED
+    }
+
+    async fn declines_input(&self, requester: &str, perform: &Perform) -> Option<String> {
+        self.page.named(requester, perform.requester_name.as_deref());
+        let webview = self.page.webview();
+        let asked = AskedInput { webview: webview.label(), requester, requester_name: perform.requester_name.as_deref(), perform };
+        let provenance = webview.try_state::<Provenance>()?;
+        provenance.declines(&asked).await
     }
 
     async fn declines(&self, call: Declinable<'_>) -> Option<String> {
@@ -305,6 +365,159 @@ impl<R: Runtime> UiApp for PageApp<R> {
                 None
             }
         }
+    }
+
+    async fn stepped_begin(&self, begin: &SteppedBegin) -> Result<Begun, Refused> {
+        self.begin_cast(begin).await
+    }
+
+    async fn step_to(&self, to: StepTo) -> Result<SteppedFrame, FrameUnanswered> {
+        self.step_cast(to).await
+    }
+
+    async fn stepped_end(&self) -> ClockEnded {
+        self.end_cast().await
+    }
+}
+
+impl<R: Runtime> PageApp<R> {
+    /// Deliver `perform` for `requester` and answer the frame that shows it.
+    async fn delivered(&self, requester: &str, perform: &Perform, resolved: &[Resolved]) -> Option<String> {
+        let scale = match scale_for(perform, &self.kept()) {
+            Ok(scale) => scale,
+            Err(why) => {
+                tracing::warn!(%why, "ui_tauri.endpoint.input_undelivered");
+                return None;
+            }
+        };
+        let _turn = self.input_turn.lock().await;
+        match self.page.perform(requester, perform, resolved, scale).await {
+            Ok(epoch) => epoch.map(|epoch| epoch.to_string()),
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.endpoint.input_undelivered");
+                None
+            }
+        }
+    }
+}
+
+/// The longest stepped screencast the plugin makes, in frames and in
+/// milliseconds: a minute at 60 fps.
+pub const MAX_CAST_FRAMES: u64 = 3601;
+pub const MAX_CAST_MS: u64 = 60_000;
+
+/// A stepped screencast while it plays: for whom the window is held, and the
+/// observation each frame is.
+#[derive(Clone)]
+struct Casting {
+    requester: String,
+    frame: ObserveCall,
+}
+
+/// What the library's `steppedClock.begin` answers.
+#[derive(serde::Deserialize)]
+struct ClockBegun {
+    unstepped: Vec<String>,
+}
+
+/// What the library's `steppedClock.advanceTo` answers, of what the plugin reads.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClockStepped {
+    #[serde(default)]
+    over_bound: Vec<String>,
+    #[serde(default)]
+    unpainted: Option<String>,
+}
+
+/// What the library's `steppedClock.end` answers.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClockEnd {
+    same_on_rerun: bool,
+    why: Vec<String>,
+}
+
+impl<R: Runtime> PageApp<R> {
+    /// What the library's stepped clock answers to `call`, one of its words.
+    async fn clock<T: DeserializeOwned>(&self, call: &str) -> Result<T, PageError> {
+        let answered = self.page.evaluate(&format!("return JSON.stringify(await globalThis.{PAGE_GLOBAL}.steppedClock.{call});")).await?;
+        serde_json::from_str(&answered).map_err(|e| PageError::Malformed(e.to_string()))
+    }
+
+    /// The sources of motion the library's clock never steps, read once; none
+    /// while the page cannot say, so the offer names no screencast then.
+    async fn unstepped(&self) -> Option<Vec<String>> {
+        if let Some(known) = self.unstepped.get() {
+            return Some(known.clone());
+        }
+        match self.clock::<Vec<String>>("unstepped()").await {
+            Ok(listed) => Some(self.unstepped.get_or_init(|| listed).clone()),
+            Err(error) => {
+                tracing::warn!(%error, "ui_tauri.cast.unstepped_unanswered");
+                None
+            }
+        }
+    }
+
+    fn casting(&self) -> Option<Casting> {
+        self.casting.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    async fn begin_cast(&self, begin: &SteppedBegin) -> Result<Begun, Refused> {
+        let refused = |why: String| Refused { code: RefusalCode::MisfitArguments, subject: Some(UI_SCREENCAST.to_string()), why };
+        let parts = begin
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                FramePart::Capture => Some(Part::Capture),
+                FramePart::Layout => Some(Part::Layout),
+                FramePart::State => Some(Part::State),
+                FramePart::Animations => None,
+            })
+            .collect();
+        let frame = ObserveCall { parts, region: None, scale: None, frame_only: !begin.presented };
+        *self.casting.lock().unwrap_or_else(PoisonError::into_inner) = Some(Casting { requester: begin.requester.clone(), frame });
+        if begin.region.is_some() || begin.scale.is_some() {
+            return Err(refused("the plugin captures a stepped frame whole, at the capture's own scale".to_string()));
+        }
+        match self.clock::<ClockBegun>(&format!("begin({{ date: {} }})", begin.date)).await {
+            Ok(begun) => Ok(Begun { unstepped: begun.unstepped }),
+            Err(error) => Err(refused(format!("the page's stepped clock did not begin: {error}"))),
+        }
+    }
+
+    async fn step_cast(&self, to: StepTo) -> Result<SteppedFrame, FrameUnanswered> {
+        let unanswered = |why: String| FrameUnanswered { why };
+        let Some(Casting { requester, frame }) = self.casting() else {
+            return Err(unanswered("no stepped screencast plays".to_string()));
+        };
+        if !self.page.holds_takeover(&requester) {
+            return Err(unanswered(format!("the person ended {requester}'s hold of the window")));
+        }
+        let started = Instant::now();
+        let stepped: ClockStepped = self
+            .clock(&format!("advanceTo({})", to.time_ms()))
+            .await
+            .map_err(|error| unanswered(format!("the page's stepped clock did not step: {error}")))?;
+        if let Some(why) = stepped.unpainted {
+            return Err(unanswered(why));
+        }
+        let observation = self.observed(&frame, false).await.map_err(|error| unanswered(error.to_string()))?;
+        let compose_us = u64::try_from(started.elapsed().as_micros()).ok();
+        Ok(SteppedFrame { observation, animations: None, compose_us, unchanged: false, over_bound: stepped.over_bound })
+    }
+
+    async fn end_cast(&self) -> ClockEnded {
+        let casting = self.casting.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let ended = match self.clock::<ClockEnd>("end()").await {
+            Ok(ended) => ClockEnded { same_on_rerun: ended.same_on_rerun, why: ended.why },
+            Err(error) => ClockEnded { same_on_rerun: false, why: vec![format!("the page's stepped clock did not end: {error}")] },
+        };
+        if let Some(casting) = casting {
+            self.page.end_takeover(&casting.requester);
+        }
+        ended
     }
 }
 
@@ -341,16 +554,18 @@ fn scale_for(perform: &Perform, kept: &[Kept]) -> Result<f64, Undivided> {
 }
 
 /// Serve `webview`'s page as the app's UI-control endpoint on the unix socket
-/// at `path`, until the app ends. With `driven`, a covered window keeps
-/// painting while a driver is connected.
-pub async fn serve<R: Runtime>(path: PathBuf, webview: Webview<R>, driven: bool) {
+/// at `path`, until the app ends, answering takeovers by `takeover`, and
+/// saying in the offer whether the app runs as a dev instance. With
+/// `driven`, a covered window keeps painting while a driver is connected.
+pub async fn serve<R: Runtime>(path: PathBuf, webview: Webview<R>, driven: bool, takeover: TakeoverPolicy, dev_instance: bool) {
     if let Some(dir) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(dir) {
             return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound");
         }
     }
     let every = Grant { classes: vec![SideEffect::ReadOnly, SideEffect::IdempotentWrite, SideEffect::NonIdempotent] };
-    let endpoint = Arc::new(Endpoint::new(PageApp::new(webview.clone()), every));
+    let app = PageApp::new(webview.clone()).dev_instance(dev_instance);
+    let endpoint = Arc::new(Endpoint::new(app, every).with_takeover(takeover));
     let listener = match bind_path(&path).await {
         Ok(listener) => listener,
         Err(error) => return tracing::warn!(path = %path.display(), %error, "ui_tauri.endpoint.unbound"),

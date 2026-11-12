@@ -114,6 +114,10 @@ pub struct LayoutNode {
     pub enabled: bool,
     pub focused: bool,
     pub interactive: bool,
+    /// The opacity the node shows with, 0 to 1: the product of its own and
+    /// its ancestors'. An app that does not give it leaves it out.
+    #[serde(default)]
+    pub opacity: Option<f64>,
     /// The named action the node maps to, if it maps to one.
     #[serde(default)]
     pub action: Option<String>,
@@ -157,6 +161,8 @@ struct LayoutNodeShape {
     enabled: bool,
     focused: bool,
     interactive: bool,
+    #[serde(default)]
+    opacity: Option<f64>,
     #[serde(default)]
     action: Option<String>,
     #[serde(default)]

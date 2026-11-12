@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/protocol.md",
-  "source_hash": "3f002f95935db807",
+  "source_hash": "ad62638b55489098",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,19 +9,19 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-protocol/Cargo.toml",
-          "hash": "8d5dfbb876eed9ce"
+          "hash": "2ec1b1cf8b8c9fa0"
         },
         {
           "path": "crates/x0k-ui-protocol/src/lib.rs",
-          "hash": "aa44ef8fa8dae094"
+          "hash": "7d407508f803ec44"
         },
         {
           "path": "crates/x0k-ui-protocol/src/offer.rs",
-          "hash": "dcf46a72047a62af"
+          "hash": "c886e1ac892fa339"
         },
         {
           "path": "crates/x0k-ui-protocol/src/observe.rs",
-          "hash": "b2400c8d49df183c"
+          "hash": "dda4ef0e7a1902a4"
         },
         {
           "path": "crates/x0k-ui-protocol/src/act.rs",
@@ -37,7 +37,7 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/fixture.rs",
-          "hash": "d5ab94b4f7dc5681"
+          "hash": "7c0dbd3d0bb1f293"
         },
         {
           "path": "crates/x0k-ui-protocol/src/replay.rs",
@@ -45,27 +45,27 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/marks.rs",
-          "hash": "57fa16fe76c70714"
+          "hash": "5bc96cf696cd2099"
         },
         {
           "path": "crates/x0k-ui-protocol/src/presentation.rs",
-          "hash": "821e00e49cd94b4e"
+          "hash": "98c84ddf2ed045d3"
         },
         {
           "path": "crates/x0k-ui-protocol/src/page.rs",
-          "hash": "956fbf887a3349b2"
+          "hash": "f879325d67023459"
         },
         {
           "path": "crates/x0k-ui-protocol/src/shapes.rs",
-          "hash": "99cae865188d00f4"
+          "hash": "97aeebdb5676abdd"
         },
         {
           "path": "crates/x0k-ui-protocol/tests/shapes.rs",
-          "hash": "d0e47e22ee19481b"
+          "hash": "47af84953971296a"
         },
         {
           "path": "crates/x0k-ui-protocol/tests/conformance.rs",
-          "hash": "791484bc989ec38b"
+          "hash": "38a1903332309259"
         }
       ]
     }

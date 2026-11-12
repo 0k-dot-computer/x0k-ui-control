@@ -12,6 +12,7 @@ use tokio::sync::oneshot;
 use x0k_ui_protocol::input::{self, undeliverable, Event, Held, Perform, Resolved};
 
 use crate::page::PageError;
+use crate::provenance::Teller;
 
 /// One event to synthesize, in view points from the view's top left, with
 /// AppKit's modifier flags.
@@ -149,8 +150,9 @@ fn us_key_code(character: &str) -> u16 {
     }
 }
 
-/// Deliver one tick's events to the WKWebView on the main thread.
-pub(crate) async fn deliver<R: Runtime>(webview: &Webview<R>, events: Vec<Synth>) -> Result<(), PageError> {
+/// Deliver one tick's events to the WKWebView on the main thread, each with
+/// the protocol's event `teller` tells the host of first.
+pub(crate) async fn deliver<R: Runtime>(webview: &Webview<R>, events: Vec<(Synth, Event)>, teller: Teller) -> Result<(), PageError> {
     if events.is_empty() {
         return Ok(());
     }
@@ -159,14 +161,15 @@ pub(crate) async fn deliver<R: Runtime>(webview: &Webview<R>, events: Vec<Synth>
         // SAFETY: on macOS `inner()` is the webview's WKWebView, which Tauri
         // keeps alive while this closure runs on the main thread.
         let view = unsafe { &*platform.inner().cast::<WKWebView>() };
-        let _ = done.send(synthesize(view, &events));
+        let _ = done.send(synthesize(view, &events, &teller));
     })?;
     delivered.await.map_err(|_| PageError::InputDropped)?
 }
 
-/// Make each event with AppKit's constructors, and hand it to the view's own
-/// responder method, as the window hands it a person's.
-fn synthesize(view: &WKWebView, events: &[Synth]) -> Result<(), PageError> {
+/// Make each event with AppKit's constructors, tell the host of it, and hand
+/// it to the view's own responder method, as the window hands it a person's.
+/// No event passes `NSApplication`'s or `NSWindow`'s `sendEvent:`.
+fn synthesize(view: &WKWebView, events: &[(Synth, Event)], teller: &Teller) -> Result<(), PageError> {
     let window = view.window().ok_or(PageError::NoWindow)?;
     let number = window.windowNumber();
     let time = NSProcessInfo::processInfo().systemUptime();
@@ -179,7 +182,7 @@ fn synthesize(view: &WKWebView, events: &[Synth]) -> Result<(), PageError> {
         let y = if view.isFlipped() { y } else { bounds.size.height - y };
         view.convertPoint_toView(NSPoint::new(x, y), None)
     };
-    for event in events {
+    for (event, told) in events {
         match event {
             Synth::Mouse { kind, x, y, flags } => {
                 let down = [NSEventType::LeftMouseDown, NSEventType::RightMouseDown, NSEventType::OtherMouseDown].contains(kind);
@@ -187,6 +190,7 @@ fn synthesize(view: &WKWebView, events: &[Synth]) -> Result<(), PageError> {
                     *kind, in_window(*x, *y), *flags, time, number, None, 0, 1, if down { 1.0 } else { 0.0 },
                 )
                 .ok_or(PageError::InputDropped)?;
+                teller.tell(told, time);
                 if down {
                     window.makeFirstResponder(Some(view.as_ref()));
                 }
@@ -198,6 +202,7 @@ fn synthesize(view: &WKWebView, events: &[Synth]) -> Result<(), PageError> {
                     *kind, NSPoint::new(0.0, 0.0), *flags, time, number, None, &characters, &characters, false, *code,
                 )
                 .ok_or(PageError::InputDropped)?;
+                teller.tell(told, time);
                 match *kind {
                     NSEventType::KeyDown => view.keyDown(&made),
                     NSEventType::KeyUp => view.keyUp(&made),
@@ -206,6 +211,7 @@ fn synthesize(view: &WKWebView, events: &[Synth]) -> Result<(), PageError> {
             }
             Synth::Scroll { x, y, dx, dy, flags } => {
                 let made = wheel(in_window(*x, *y), number, time, *dx, *dy, *flags)?;
+                teller.tell(told, time);
                 view.scrollWheel(&made);
             }
         }

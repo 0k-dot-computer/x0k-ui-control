@@ -4,7 +4,9 @@
 pub mod address;
 pub mod client;
 pub mod conformance;
+pub mod screencast;
 pub mod server;
+pub mod takeover;
 pub mod wire;
 
 use std::collections::BTreeMap;
@@ -18,8 +20,9 @@ pub use x0k_ui_protocol::act::InvokeAnswer;
 pub use x0k_ui_protocol::fixture::{PresentAnswer, ReleaseAnswer};
 pub use x0k_ui_protocol::history::{HistoryAnswer, NavigateAnswer};
 pub use x0k_ui_protocol::input::PerformAnswer;
+pub use x0k_ui_protocol::screencast::{CastAnswer, DiscardAnswer, FramesAnswer};
 pub use x0k_ui_protocol::shapes::{
-    HISTORY, INVOKE, NAVIGATE, OBSERVE, OFFER, OPERATIONS, PERFORM, PRESENT, RELEASE,
+    CAST, DISCARD, FRAMES, HISTORY, INVOKE, NAVIGATE, OBSERVE, OFFER, OPERATIONS, PERFORM, PRESENT, RELEASE,
 };
 
 /// A shape's pin, as the protocol computes it.

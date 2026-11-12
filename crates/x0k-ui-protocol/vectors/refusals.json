@@ -1,5 +1,5 @@
 {
-  "clause": "ui-control-channel §8 to §10, ui-interfaces §4",
+  "clause": "ui-control-channel §8 to §10, ui-interfaces §4, ui-screencast §2, §3, §6, §9",
   "check": "refusal.read",
   "about": "A refusal's code is one of the protocol's words, and no other word reads. The refusals that name a condition of the app or its host read with their subject. The answer is {reads: true, refused} or {reads: false}.",
   "vectors": [
@@ -68,6 +68,91 @@
         "refused": {
           "code": "fixture_ended",
           "subject": "fixture-3"
+        }
+      }
+    },
+    {
+      "name": "unknown_screencast reads, naming the handle",
+      "input": {
+        "refused": {
+          "code": "unknown_screencast",
+          "subject": "sc_4f1a9c",
+          "why": "this session holds no screencast sc_4f1a9c"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "unknown_screencast",
+          "subject": "sc_4f1a9c"
+        }
+      }
+    },
+    {
+      "name": "capture_not_permitted reads, naming the permission",
+      "input": {
+        "refused": {
+          "code": "capture_not_permitted",
+          "subject": "Screen Recording",
+          "why": "the host process lacks the Screen Recording permission"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "capture_not_permitted",
+          "subject": "Screen Recording"
+        }
+      }
+    },
+    {
+      "name": "mark_required reads, naming ui/history",
+      "input": {
+        "refused": {
+          "code": "mark_required",
+          "subject": "ui/history",
+          "why": "only a dev instance shows a fixture without its mark"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "mark_required",
+          "subject": "ui/history"
+        }
+      }
+    },
+    {
+      "name": "no_screencast_interface reads, naming ui/screencast",
+      "input": {
+        "refused": {
+          "code": "no_screencast_interface",
+          "subject": "ui/screencast",
+          "why": "the offer does not name ui/screencast"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "no_screencast_interface",
+          "subject": "ui/screencast"
+        }
+      }
+    },
+    {
+      "name": "unoffered_clock reads, naming the clock",
+      "input": {
+        "refused": {
+          "code": "unoffered_clock",
+          "subject": "streamed",
+          "why": "the offer lists no streamed clock"
+        }
+      },
+      "expect": {
+        "reads": true,
+        "refused": {
+          "code": "unoffered_clock",
+          "subject": "streamed"
         }
       }
     },

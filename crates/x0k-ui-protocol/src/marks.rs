@@ -164,6 +164,7 @@ mod tests {
             enabled: true,
             focused: false,
             interactive: false,
+            opacity: None,
             action: None,
             source: None,
             composition: None,

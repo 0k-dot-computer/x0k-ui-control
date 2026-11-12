@@ -1,0 +1,166 @@
+{
+  "clause": "ui-interfaces §1",
+  "check": "screencast.class",
+  "about": "A cast's side-effect class is the highest among its run's steps: an invoke takes its action's class, a perform is non_idempotent, a present and a release are idempotent_write. A run with no steps is idempotent_write at the stepped clock, since it holds the app's clock, and read_only otherwise. The input is the run, the clock and each invoke step's action class in order; the answer is {side_effect}.",
+  "vectors": [
+    {
+      "name": "a run with no steps at the stepped clock is a write",
+      "input": {
+        "run": [],
+        "clock": "stepped",
+        "classes": []
+      },
+      "expect": {
+        "side_effect": "idempotent_write"
+      }
+    },
+    {
+      "name": "a run with no steps at the streamed clock reads only",
+      "input": {
+        "run": [],
+        "clock": "streamed",
+        "classes": []
+      },
+      "expect": {
+        "side_effect": "read_only"
+      }
+    },
+    {
+      "name": "a fixture sequence is idempotent_write",
+      "input": {
+        "run": [
+          {
+            "at_ms": 0,
+            "step": {
+              "do": "present",
+              "present": {
+                "fixture": {
+                  "kind": "state",
+                  "state": {
+                    "cards": 1
+                  }
+                },
+                "fingerprint": "53a0ce8ce5e01c10"
+              }
+            }
+          },
+          {
+            "at_ms": 100,
+            "step": {
+              "do": "present",
+              "present": {
+                "fixture": {
+                  "kind": "state",
+                  "state": {
+                    "cards": 2
+                  }
+                },
+                "fingerprint": "53a0ce8ce5e01c10"
+              }
+            }
+          }
+        ],
+        "clock": "streamed",
+        "classes": []
+      },
+      "expect": {
+        "side_effect": "idempotent_write"
+      }
+    },
+    {
+      "name": "a run with a perform step is non_idempotent",
+      "input": {
+        "run": [
+          {
+            "at_ms": 0,
+            "step": {
+              "do": "present",
+              "present": {
+                "fixture": {
+                  "kind": "state",
+                  "state": {
+                    "cards": 1
+                  }
+                },
+                "fingerprint": "53a0ce8ce5e01c10"
+              }
+            }
+          },
+          {
+            "at_ms": 50,
+            "step": {
+              "do": "perform",
+              "perform": {
+                "sources": [
+                  {
+                    "id": "m",
+                    "kind": "mouse",
+                    "steps": [
+                      {
+                        "do": "pause",
+                        "ms": 50
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "clock": "stepped",
+        "classes": []
+      },
+      "expect": {
+        "side_effect": "non_idempotent"
+      }
+    },
+    {
+      "name": "a run of one read-only invoke reads only at the streamed clock",
+      "input": {
+        "run": [
+          {
+            "at_ms": 0,
+            "step": {
+              "do": "invoke",
+              "invoke": {
+                "action": "card.open",
+                "args": {}
+              }
+            }
+          }
+        ],
+        "clock": "streamed",
+        "classes": [
+          "read_only"
+        ]
+      },
+      "expect": {
+        "side_effect": "read_only"
+      }
+    },
+    {
+      "name": "a run of one non-idempotent invoke is non_idempotent",
+      "input": {
+        "run": [
+          {
+            "at_ms": 0,
+            "step": {
+              "do": "invoke",
+              "invoke": {
+                "action": "card.open",
+                "args": {}
+              }
+            }
+          }
+        ],
+        "clock": "stepped",
+        "classes": [
+          "non_idempotent"
+        ]
+      },
+      "expect": {
+        "side_effect": "non_idempotent"
+      }
+    }
+  ]
+}

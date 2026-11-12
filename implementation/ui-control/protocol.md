@@ -17,7 +17,7 @@ implementation:ui-control\/protocol a x0k:Implementation ;
 A driver and an app in any language agree on what `x0k:architecture/ui-control-channel`
 §8, §9 and §10 and `x0k:architecture/ui-interfaces` §1 to §5 say, or the two
 cannot work together. This crate states those values and the checks made on them,
-and depends on nothing but `x0k-datum`.
+and depends only on `x0k-datum`, and on `blake3` for a screencast's hashes.
 It holds no socket and no window, so it can be read, tested and published
 without the rest of x0k.
 
@@ -35,7 +35,7 @@ the decision they hold it to.
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-protocol"
-version = "0.2.0"
+version = "0.3.0"
 edition = { workspace = true }
 license = "MIT"
 description = "What an app and a driver say over the UI-control endpoint: the offer, an observation, an action, a sequence of input, and the checks made on them."
@@ -44,6 +44,8 @@ readme = "../../README.md"
 keywords = ["ui", "testing", "automation", "agents", "protocol"]
 
 [dependencies]
+# A screencast row's hashes and its trace hash, as x0k.record-script/1's.
+blake3 = "1.8"
 serde = { workspace = true }
 # shapes.json keeps each spelling's keys in the order the spelling writes them.
 serde_json = { workspace = true, features = ["preserve_order"] }
@@ -71,6 +73,7 @@ pub mod offer;
 pub mod page;
 pub mod presentation;
 pub mod replay;
+pub mod screencast;
 pub mod shapes;
 
 use serde::{Deserialize, Serialize};
@@ -83,8 +86,13 @@ pub enum RefusalCode {
     /// `ui/act`: the offer lists no such action.
     UnknownAction,
     /// `ui/act`: the grant does not cover the action's side-effect class.
+    /// `ui/screencast`: the grant does not hold the interface a step's
+    /// operation belongs to, or `ui/screencast` itself.
     OutsideGrant,
     /// `ui/act`: the arguments do not fit the action's shape.
+    /// `ui/screencast`: a cast whose arguments do not fit what the offer
+    /// answers: a run past its bounds, a frame rate outside 1 to 240, or steps
+    /// out of time order.
     MisfitArguments,
     /// `ui/act`: the offer spells a shape that cannot be read.
     UnreadableShape,
@@ -136,11 +144,26 @@ pub enum RefusalCode {
     /// cannot paint its window now, so no frame would show.
     CannotPaint,
     /// `ui/history`'s `present`, and `ui/act` or `ui/input` while a fixture
-    /// stands: the app declines the call for now, for the reason it gives.
+    /// stands, and `ui/input` at any time: the app declines the call for
+    /// now, for the reason it gives.
     Declined,
     /// `ui/act`, `ui/input`: the app ended the fixture the session presented,
     /// for the reason it gives, and shows its live state.
     FixtureEnded,
+    /// `ui/screencast`: a handle the endpoint does not hold: never cast,
+    /// discarded, replaced by its session's next cast, or its session ended.
+    UnknownScreencast,
+    /// `ui/screencast`: the platform does not permit the capture a streamed
+    /// screencast needs, naming the permission and the process that needs it.
+    CaptureNotPermitted,
+    /// `ui/history`'s `present`, and a screencast's `present` step: `mark:
+    /// false` asked of an instance that is not a dev instance.
+    MarkRequired,
+    /// `ui/screencast`: the offer does not name `ui/screencast`.
+    NoScreencastInterface,
+    /// `ui/screencast`: a cast names a clock the offer does not list, or
+    /// `sampled`, which no app offers.
+    UnofferedClock,
 }
 
 /// A call refused before anything ran.
@@ -191,6 +214,27 @@ the model has, and another host may deliver it. `fixture_ended` is apart from
 session hears `fixture_ended` once, on its first `invoke` or `perform` after
 the app ended its fixture.
 
+`x0k:architecture/ui-screencast` adds five words and widens two:
+
+| Code | Subject | When |
+|---|---|---|
+| `unknown_screencast` | the handle | a `frames` or `discard` for a handle the endpoint does not hold (§2) |
+| `capture_not_permitted` | the permission | the platform does not permit a streamed screencast's capture, naming the process that needs it (§6) |
+| `mark_required` | `ui/history`, or the step's index | a `present`, or a `present` step, asks `mark: false` of an instance that is not a dev instance (§9) |
+| `no_screencast_interface` | `ui/screencast` | a `cast` to an app whose offer does not name `ui/screencast`, or whose host makes no screencast (§2) |
+| `unoffered_clock` | the clock | a `cast` names a clock the offer does not list, or `sampled`, which no app offers (§3) |
+| `outside_grant` | the step's interface, or `ui/screencast` | a run's step needs an interface the grant does not hold (§2) |
+| `misfit_arguments` | the field or the step | a cast whose arguments do not fit what the offer answers, refused before anything plays (§2 to §4) |
+
+`no_screencast_interface` is `no_input_interface` and `no_history_interface`
+for a screencast, and `unoffered_clock` lets a driver that asked for a clock
+tell that the app keeps another, and fall back to it or to `sampled`, from a
+cast it must fix. A run past the offer's bounds, a frame rate outside 1 to
+240 and steps out of time order are the call's arguments not fitting what
+the app offers, so each is `misfit_arguments`, naming the field. A step's
+own refusal at admission, such as `no_fixtures` or `unknown_action`, is the
+step's operation's word.
+
 ## The offer
 
 The offer is what `ui/observe`'s `offer` operation answers (§8): the app, the
@@ -207,6 +251,13 @@ declares. Each is empty when the app says nothing, which is what an edge that
 reaches an app from outside says. Their values are under "What going back does
 to an effect" below.
 
+`ui-interfaces` §5 also adds two for a screencast
+(`x0k:architecture/ui-screencast` §3): whether the app runs as a **dev
+instance**, which no one's live work runs in, and its `screencast` field, the
+clocks it keeps and its bounds, under "A screencast" below
+(`x0k:implementation/ui-control/screencast`). An app that says nothing is not a
+dev instance and offers no screencast.
+
 <a name="chunk-offer"></a><sub>[`src/offer.rs`](../../crates/x0k-ui-protocol/src/offer.rs) · `#offer`</sub>
 
 ```rust {#offer file="src/offer.rs"}
@@ -219,14 +270,17 @@ use x0k_datum::shape::Shape;
 pub use crate::history::{Grade, HistoryOffer};
 pub use crate::input::InputOffer;
 pub use crate::replay::{PolicyEntry, Sandbox};
+pub use crate::screencast::ScreencastOffer;
 
 pub const UI_OBSERVE: &str = "ui/observe";
 pub const UI_ACT: &str = "ui/act";
 pub const UI_INPUT: &str = "ui/input";
 pub const UI_HISTORY: &str = "ui/history";
+pub const UI_SCREENCAST: &str = "ui/screencast";
 
-/// How reversible an action's effect is (`operation-surface` §12).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Shape)]
+/// How reversible an action's effect is (`operation-surface` §12), least to
+/// most: a screencast's `cast` takes the highest among its steps'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Shape)]
 #[serde(rename_all = "snake_case")]
 pub enum SideEffect {
     ReadOnly,
@@ -282,6 +336,15 @@ pub struct Offer {
     /// offer names `ui/input` (§10).
     #[serde(default)]
     pub input: Option<InputOffer>,
+    /// Whether the app runs as a dev instance, which only the app decides,
+    /// when it starts (`ui-interfaces` §5). Only a dev instance honours a
+    /// `present` that asks `mark: false`.
+    #[serde(default)]
+    pub dev_instance: bool,
+    /// The clocks the app keeps for a screencast and its bounds, when the
+    /// offer names `ui/screencast` (`ui-screencast` §3).
+    #[serde(default)]
+    pub screencast: Option<ScreencastOffer>,
 }
 
 impl Offer {
@@ -433,6 +496,10 @@ pub struct LayoutNode {
     pub enabled: bool,
     pub focused: bool,
     pub interactive: bool,
+    /// The opacity the node shows with, 0 to 1: the product of its own and
+    /// its ancestors'. An app that does not give it leaves it out.
+    #[serde(default)]
+    pub opacity: Option<f64>,
     /// The named action the node maps to, if it maps to one.
     #[serde(default)]
     pub action: Option<String>,
@@ -476,6 +543,8 @@ struct LayoutNodeShape {
     enabled: bool,
     focused: bool,
     interactive: bool,
+    #[serde(default)]
+    opacity: Option<f64>,
     #[serde(default)]
     action: Option<String>,
     #[serde(default)]
@@ -1633,6 +1702,15 @@ answers the whole state to show:
    the current one.
 4. The state, after the patch, does not fit the shape: `misfit_state`, naming
    the place.
+5. The call asks `mark: false` of an instance the offer does not say is a dev
+   instance: `mark_required`, naming `ui/history`.
+
+`mark` asks whether the host draws the fixture mark over the window while the
+fixture stands, and it does unless the call says `false`. Only a dev instance,
+which no one's live work runs in, may leave it off what the person sees, so a
+recording of the person's screen shows the app as it will look. The mark is
+the host's drawing, never the app's frame, so a capture of the frame alone
+shows none either way.
 
 The check needs the app's state shape and its live state, which only the app
 holds, so the endpoint asks the app for both and makes the check before the app
@@ -1688,6 +1766,18 @@ pub struct PresentCall {
     /// The head the driver read the live state at.
     #[serde(default)]
     pub if_match: Option<String>,
+    /// Whether the host marks the fixture over the window: it does unless
+    /// this is `false`, which only a dev instance honours.
+    #[serde(default)]
+    pub mark: Option<bool>,
+}
+
+impl PresentCall {
+    /// Whether the call leaves the fixture mark on, as every call does unless
+    /// it says `false`.
+    pub fn marked(&self) -> bool {
+        self.mark != Some(false)
+    }
 }
 
 /// `present`'s answer.
@@ -1792,6 +1882,10 @@ pub fn check_present(
     compiled
         .check(&Datum::from_json(&state))
         .map_err(|misfit| Refused::new(RefusalCode::MisfitState, &misfit.at, misfit.to_string()))?;
+    if !call.marked() && !offer.dev_instance {
+        let why = "only a dev instance shows a fixture without its mark, and this instance is not one";
+        return Err(Refused::new(RefusalCode::MarkRequired, UI_HISTORY, why));
+    }
     Ok(state)
 }
 ```
@@ -2220,6 +2314,7 @@ mod tests {
             enabled: true,
             focused: false,
             interactive: false,
+            opacity: None,
             action: None,
             source: None,
             composition: None,
@@ -2416,6 +2511,8 @@ pub struct InputPresentation {
     /// Each drawn requester's colour index, held while anything of theirs is drawn.
     hues: BTreeMap<String, usize>,
     takeover: Takeover,
+    /// The fixture the host marks over the window while it stands.
+    fixture: Option<String>,
     hidden: bool,
     pub changes: u64,
 }
@@ -2510,7 +2607,7 @@ impl InputPresentation {
 
     /// Whether the drawing shows anything now.
     pub fn shows_anything(&self) -> bool {
-        !self.hidden && (self.fades() || self.takeover != Takeover::Free)
+        !self.hidden && (self.fades() || self.takeover != Takeover::Free || self.fixture.is_some())
     }
 
     fn fades(&self) -> bool {
@@ -2579,6 +2676,11 @@ held, since the window has one person's input to give. Only the person
 answers, and a host passes them nothing but a person's input; an injected
 event never reaches `answer_takeover` or `person_key`. A yes holds the window's
 input for the requester until its sequence answers and the endpoint ends it.
+Where the host's configuration allows the takeover without asking
+(`x0k:implementation/ui-control/takeover`), `hold_takeover` holds it at once,
+and is refused the same way while another is asked for or held. A hold the
+person never answered is drawn the same as one they granted, and the exit key
+ends it the same.
 
 While a takeover is asked for or held, the window takes every key of the
 person's. `TAKEOVER_EXIT`, the key the mark names, refuses the ask or ends the
@@ -2602,6 +2704,17 @@ impl InputPresentation {
             return false;
         }
         self.takeover = Takeover::Asked { requester: requester.to_string() };
+        self.changes += 1;
+        true
+    }
+
+    /// `requester` holds the window's input without an ask, as the host's
+    /// configuration allows; false while another is asked for or held.
+    pub fn hold_takeover(&mut self, requester: &str) -> bool {
+        if self.takeover != Takeover::Free {
+            return false;
+        }
+        self.takeover = Takeover::Held { requester: requester.to_string() };
         self.changes += 1;
         true
     }
@@ -2645,6 +2758,51 @@ impl InputPresentation {
 }
 ```
 
+The fixture mark is the drawing's too (`x0k:architecture/ui-interfaces` §4).
+While a state fixture stands, the host marks the window, so a person never
+takes the fixture for the live screen, and the mark is the host's, outside the
+app's frame, as a driver's pointer is. So a capture of the frame alone shows
+none, and a capture with the host's drawing shows it as the person sees it.
+The host marks a fixture when `present` shows one, unless the call asked
+`mark: false`, which only a dev instance is let through to ask, and unmarks it
+when the fixture goes: released, replaced by an unmarked one, ended by the app,
+or released at its session's end.
+
+Every host draws the mark alike, so a person learns one mark for every app: a
+band `FIXTURE_BAND` units wide around the window in `FIXTURE_INK`, and
+`FIXTURE_NOTICE` at its foot. A look changes none of it, because a mark a page
+could recolour into its own content would stop telling the person anything.
+The conformance suite reads the band's ink in a capture
+(`x0k:implementation/ui-control/conformance`, "A screencast"). Like a
+takeover, the mark is no mark that fades.
+
+<a name="chunk-presentation-model-5"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#presentation-model` · continues</sub>
+
+```rust {#presentation-model}
+
+/// The colour of the fixture mark's band, as `[r, g, b]`, in every host.
+pub const FIXTURE_INK: [u8; 3] = [245, 158, 11];
+/// How wide the fixture mark's band is, in host units.
+pub const FIXTURE_BAND: f64 = 6.0;
+/// What the fixture mark says at the window's foot.
+pub const FIXTURE_NOTICE: &str = "A fixture, not the live state";
+
+impl InputPresentation {
+    /// Mark the fixture `handle` over the window while it stands, or mark none.
+    pub fn mark_fixture(&mut self, handle: Option<&str>) {
+        if self.fixture.as_deref() != handle {
+            self.fixture = handle.map(str::to_string);
+            self.changes += 1;
+        }
+    }
+
+    /// The fixture the host marks now.
+    pub fn fixture_mark(&self) -> Option<&str> {
+        self.fixture.as_deref()
+    }
+}
+```
+
 A look says how the drawing is drawn, and never when input is delivered
 (`ui-control-channel` §10): the pace is the call's, and the look has no part
 in it. Each host has its own look, and an app, or a theme where the host has
@@ -2667,7 +2825,7 @@ act"). A look is plain data, the same to every host:
 Every field has a default, so a look that names none is the host's default
 look, and a page declares only what it changes.
 
-<a name="chunk-presentation-model-5"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#presentation-model` · continues</sub>
+<a name="chunk-presentation-model-6"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#presentation-model` · continues</sub>
 
 ```rust {#presentation-model}
 
@@ -2740,16 +2898,18 @@ The model's rules hold with no window: a pointer is kept per requester and
 source, a press leaves a ring and a release does not, a run of keys is one
 caption, everything fades by its time, a hidden drawing shows nothing, and a
 watchable move takes at least its least time. A takeover is held only after a
-yes, one ask at a time; the exit key refuses or ends it; one requester's end
+yes or an allow, one at a time; the exit key refuses or ends it however it was
+allowed; one requester's end
 leaves another's takeover; and a held takeover is drawn without being a mark
-that fades. Two requesters drawn at once hold two colours, and a requester
+that fades, as a marked fixture is, which is drawn until the host unmarks it
+and hidden with the rest. Two requesters drawn at once hold two colours, and a requester
 keeps its colour until nothing of its is drawn. A look names a requester by
 its exact key first and its longest prefix next, then by the name its sequence
 gives (`requester_name`), so a person's own naming outranks what a driver calls
 itself; a look that declares nothing is the default one, and a palette picks
 by index round its length.
 
-<a name="chunk-presentation-model-6"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#presentation-model` · continues</sub>
+<a name="chunk-presentation-model-7"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-protocol/src/lib.rs) · `#presentation-model` · continues</sub>
 
 ```rust {#presentation-model}
 
@@ -2839,6 +2999,21 @@ mod tests {
     }
 
     #[test]
+    fn an_allowed_takeover_holds_without_an_ask_one_at_a_time_and_the_exit_key_ends_it() {
+        let mut shown = InputPresentation::default();
+        assert!(shown.hold_takeover("agent"));
+        assert_eq!(shown.takeover(), &Takeover::Held { requester: "agent".to_string() });
+        assert!(!shown.hold_takeover("other"), "a second hold was taken while one stood");
+        assert!(!shown.answer_takeover(true), "an allowed hold was answered as an ask");
+        assert!(shown.person_key("a", true), "a key reached the window under an allowed hold");
+        assert!(shown.person_key(TAKEOVER_EXIT, true));
+        assert_eq!(shown.takeover(), &Takeover::Free, "the exit key did not end an allowed hold");
+        assert!(shown.ask_takeover("other"));
+        assert!(!shown.hold_takeover("agent"), "a hold was taken over an ask");
+        assert_eq!(shown.takeover(), &Takeover::Asked { requester: "other".to_string() });
+    }
+
+    #[test]
     fn two_requesters_hold_two_colours_and_a_colour_is_kept_while_drawn() {
         let now = Instant::now();
         let mut shown = InputPresentation::default();
@@ -2881,6 +3056,24 @@ mod tests {
         let look: InputLook = serde_json::from_str(r##"{"colors": ["#111111", "#222222"], "pointer": "dot"}"##).expect("a look");
         assert_eq!((look.color(0), look.color(3)), (Some("#111111"), Some("#222222")));
         assert_eq!((look.pointer, look.ring), (PointerShape::Dot, 8.0));
+    }
+
+    #[test]
+    fn a_marked_fixture_is_drawn_until_it_is_unmarked_and_is_no_mark_that_fades() {
+        let now = Instant::now();
+        let mut shown = InputPresentation::default();
+        shown.mark_fixture(Some("x1"));
+        assert!(shown.shows_anything(), "a marked fixture was not drawn");
+        assert_eq!(shown.fixture_mark(), Some("x1"));
+        assert!(!shown.prune(now), "a fixture's mark counted as a mark that fades");
+        shown.hide(true);
+        assert!(!shown.shows_anything(), "a hidden drawing showed a fixture's mark");
+        shown.hide(false);
+        let changes = shown.changes;
+        shown.mark_fixture(Some("x1"));
+        assert_eq!(shown.changes, changes, "marking the fixture marked counted as a change");
+        shown.mark_fixture(None);
+        assert!(!shown.shows_anything(), "an unmarked fixture was drawn");
     }
 
     #[test]
@@ -3010,6 +3203,8 @@ pub fn page_offer(declared: Declared) -> Offer {
         replay_policy: Vec::new(),
         sandboxes: Vec::new(),
         input: None,
+        dev_instance: false,
+        screencast: None,
     }
 }
 ```
@@ -3134,7 +3329,9 @@ to read, and a test holds that file to these types.
 
 Each operation also declares its side-effect class (`ui-interfaces` §1), and
 `operation_class` is that table. `invoke` takes the class of the action it
-invokes, so it has none of its own.
+invokes, and `cast` the highest among its run's steps
+(`x0k:implementation/ui-control/screencast`, `cast_class`), so neither has
+one of its own.
 
 A pin is FNV-1a over the spelling's canonical CBOR, in hex. Agreement is about
 compatibility and not security, so the fingerprint needs no cryptographic hash,
@@ -3155,6 +3352,7 @@ use crate::history::{HistoryAnswer, HistoryCall, NavigateAnswer, NavigateCall};
 use crate::input::{Perform, PerformAnswer};
 use crate::observe::{Observation, ObserveCall};
 use crate::offer::{Interface, Offer, SideEffect, UI_ACT, UI_INPUT, UI_OBSERVE};
+use crate::screencast::{CastAnswer, CastCall, DiscardAnswer, DiscardCall, FramesAnswer, FramesCall};
 
 /// `ui/observe`: the app's standing.
 pub const OFFER: &str = "ui/observe.offer";
@@ -3173,15 +3371,24 @@ pub const PRESENT: &str = "ui/history.present";
 /// `ui/history`: return from a state fixture to the live state.
 pub const RELEASE: &str = "ui/history.release";
 
+/// `ui/screencast`: play a run and keep its frames (`ui-screencast` §2).
+pub const CAST: &str = "ui/screencast.cast";
+/// `ui/screencast`: read frames of a screencast the endpoint holds.
+pub const FRAMES: &str = "ui/screencast.frames";
+/// `ui/screencast`: drop a screencast's frames.
+pub const DISCARD: &str = "ui/screencast.discard";
+
 /// The operations an endpoint serves.
-pub const OPERATIONS: [&str; 8] = [OFFER, OBSERVE, INVOKE, PERFORM, HISTORY, NAVIGATE, PRESENT, RELEASE];
+pub const OPERATIONS: [&str; 11] =
+    [OFFER, OBSERVE, INVOKE, PERFORM, HISTORY, NAVIGATE, PRESENT, RELEASE, CAST, FRAMES, DISCARD];
 
 /// The side-effect class `operation` declares (`ui-interfaces` §1). `invoke`
-/// has none of its own: it takes the class of the action it invokes.
+/// has none of its own: it takes the class of the action it invokes; nor has
+/// `cast`, which takes the highest among its run's steps.
 pub fn operation_class(operation: &str) -> Option<SideEffect> {
     match operation {
-        OFFER | OBSERVE | HISTORY => Some(SideEffect::ReadOnly),
-        NAVIGATE | PRESENT | RELEASE => Some(SideEffect::IdempotentWrite),
+        OFFER | OBSERVE | HISTORY | FRAMES => Some(SideEffect::ReadOnly),
+        NAVIGATE | PRESENT | RELEASE | DISCARD => Some(SideEffect::IdempotentWrite),
         PERFORM => Some(SideEffect::NonIdempotent),
         _ => None,
     }
@@ -3209,6 +3416,9 @@ pub fn operation_shapes() -> Vec<OperationShape> {
         shape(NAVIGATE, NavigateCall::spelling(), NavigateAnswer::spelling()),
         shape(PRESENT, PresentCall::spelling(), PresentAnswer::spelling()),
         shape(RELEASE, ReleaseCall::spelling(), ReleaseAnswer::spelling()),
+        shape(CAST, CastCall::spelling(), CastAnswer::spelling()),
+        shape(FRAMES, FramesCall::spelling(), FramesAnswer::spelling()),
+        shape(DISCARD, DiscardCall::spelling(), DiscardAnswer::spelling()),
     ]
 }
 
@@ -3243,7 +3453,8 @@ pub fn interface(name: &str) -> Option<Interface> {
 }
 
 /// The interfaces every app built on these operations answers. An app that
-/// keeps a history adds `ui/history` with [`interface`].
+/// keeps a history adds `ui/history` with [`interface`], and one that makes
+/// screencasts `ui/screencast`.
 pub fn interfaces() -> Vec<Interface> {
     [UI_OBSERVE, UI_ACT, UI_INPUT].into_iter().filter_map(interface).collect()
 }
@@ -3271,7 +3482,7 @@ use x0k_ui_protocol::history::{
 };
 use x0k_ui_protocol::input::{Perform, PerformAnswer, Source, Step, Target};
 use x0k_ui_protocol::observe::{Bounds, Capture, LayoutNode, Observation};
-use x0k_ui_protocol::offer::{UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE};
+use x0k_ui_protocol::offer::{UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE, UI_SCREENCAST};
 use x0k_ui_protocol::shapes::{
     interface, interface_fingerprint, operation_shapes, HISTORY, NAVIGATE, OBSERVE, PRESENT, RELEASE, SHAPES_FILE,
 };
@@ -3285,7 +3496,7 @@ fn written() -> Value {
         });
         operations.insert(shape.operation.to_string(), spelled);
     }
-    let fingerprints: Map<String, Value> = [UI_OBSERVE, UI_ACT, UI_INPUT, UI_HISTORY]
+    let fingerprints: Map<String, Value> = [UI_OBSERVE, UI_ACT, UI_INPUT, UI_HISTORY, UI_SCREENCAST]
         .into_iter()
         .filter_map(interface)
         .map(|interface| (interface.name, Value::String(interface.fingerprint)))
@@ -3320,6 +3531,7 @@ fn node() -> LayoutNode {
         enabled: true,
         focused: false,
         interactive: true,
+        opacity: None,
         action: None,
         source: None,
         composition: None,
@@ -3393,7 +3605,7 @@ fn a_value_fits_the_shape_its_operation_declares() {
 
     let present = shapes.iter().find(|shape| shape.operation == PRESENT).expect("present");
     for fixture in [Fixture::State { state: json!({"open": true}) }, Fixture::Patch { patch: json!({"open": null}) }] {
-        let call = PresentCall { fixture, fingerprint: "f".to_string(), if_match: Some("s4".to_string()) };
+        let call = PresentCall { fixture, fingerprint: "f".to_string(), if_match: Some("s4".to_string()), mark: None };
         let call = serde_json::to_value(call).expect("JSON");
         assert!(fits(&present.argument, &call, Use::Argument), "{call}");
     }
@@ -3462,6 +3674,7 @@ use x0k_ui_protocol::offer::SideEffect;
 use x0k_ui_protocol::observe::{check_observation, while_cannot_paint, Observation, ObserveCall, StatePart};
 use x0k_ui_protocol::offer::Offer;
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose};
+use x0k_ui_protocol::screencast::{cast_class, check_cast, check_screencast_offer, first_frame_at, CastCall, Clock, TimedStep};
 use x0k_ui_protocol::shapes::operation_class;
 use x0k_ui_protocol::Refused;
 
@@ -3605,6 +3818,31 @@ fn run(check: &str, input: &Value) -> Value {
             json!({"taken": disposition(&offer, purpose, class, &action)})
         }
         "operation.class" => json!({"side_effect": operation_class(&field::<String>(input, "operation"))}),
+        "screencast.cast" => {
+            let offer: Offer = field(input, "offer");
+            let holds: Vec<String> = field(input, "holds");
+            let grant: Grant = field(input, "grant");
+            let call: CastCall = field(input, "cast");
+            match check_cast(&offer, &holds, &grant, &call) {
+                Ok(admitted) => json!({"admitted": admitted}),
+                Err(refused) => json!({"refused": refused}),
+            }
+        }
+        "screencast.frame" => {
+            let at_ms: u64 = field(input, "at_ms");
+            let fps: u32 = field(input, "fps");
+            json!({"frame": first_frame_at(at_ms, fps)})
+        }
+        "screencast.offer" => match check_screencast_offer(&field::<Offer>(input, "offer")) {
+            Ok(()) => json!({"fits": true}),
+            Err(fault) => json!({"fits": false, "fault": fault}),
+        },
+        "screencast.class" => {
+            let run: Vec<TimedStep> = field(input, "run");
+            let clock: Clock = field(input, "clock");
+            let classes: Vec<SideEffect> = field(input, "classes");
+            json!({"side_effect": cast_class(&run, clock, &classes)})
+        }
         other => panic!("no binding for check {other}: a file nobody runs fails the suite"),
     }
 }

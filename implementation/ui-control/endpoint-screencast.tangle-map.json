@@ -1,0 +1,25 @@
+{
+  "source": "implementation/ui-control/endpoint-screencast.md",
+  "source_hash": "78f4d9643bd296ac",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "debc5d912e855de8",
+      "outputs": [
+        {
+          "path": "crates/x0k-ui-endpoint/src/screencast.rs",
+          "hash": "bf04f4d8bed81688"
+        },
+        {
+          "path": "crates/x0k-ui-endpoint/src/server/cast.rs",
+          "hash": "2de3f8297700f1e7"
+        },
+        {
+          "path": "crates/x0k-ui-endpoint/src/screencast/tests.rs",
+          "hash": "c5f69a9d1c6d2be2"
+        }
+      ]
+    }
+  ]
+}

@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use x0k_ui_protocol::input::{self, undeliverable, Event, Held, Perform, Resolved};
 
 use crate::page::PageError;
+use crate::provenance::Teller;
 
 /// One event to synthesize, in the widget's units, with GDK's modifier state.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,27 +124,29 @@ fn keyval(key: &str) -> (u32, ModifierType) {
     (*key, mask)
 }
 
-/// Deliver one tick's events to the webview's widget on GTK's main thread.
-pub(crate) async fn deliver<R: Runtime>(webview: &Webview<R>, events: Vec<Synth>) -> Result<(), PageError> {
+/// Deliver one tick's events to the webview's widget on GTK's main thread,
+/// each with the protocol's event `teller` tells the host of first.
+pub(crate) async fn deliver<R: Runtime>(webview: &Webview<R>, events: Vec<(Synth, Event)>, teller: Teller) -> Result<(), PageError> {
     if events.is_empty() {
         return Ok(());
     }
     let (done, delivered) = oneshot::channel();
     webview.with_webview(move |platform| {
-        let _ = done.send(synthesize(platform.inner().upcast_ref(), &events));
+        let _ = done.send(synthesize(platform.inner().upcast_ref(), &events, &teller));
     })?;
     delivered.await.map_err(|_| PageError::InputDropped)?
 }
 
-/// Make each event as GDK makes a real one, and hand it to GTK's dispatch.
-fn synthesize(view: &gtk::Widget, events: &[Synth]) -> Result<(), PageError> {
+/// Make each event as GDK makes a real one, tell the host of it, and hand it
+/// to GTK's dispatch.
+fn synthesize(view: &gtk::Widget, events: &[(Synth, Event)], teller: &Teller) -> Result<(), PageError> {
     let window = view.window().ok_or(PageError::NoWindow)?;
     let toplevel = view.toplevel().and_then(|top| top.window()).ok_or(PageError::NoWindow)?;
     let display = window.display();
     let seat = display.default_seat().ok_or(PageError::NoWindow)?;
     let keymap = gdk::Keymap::for_display(&display);
     let time = (glib::monotonic_time() / 1000) as u32;
-    for event in events {
+    for (event, told) in events {
         let root = |x: f64, y: f64| {
             let (rx, ry) = window.root_coords(x.round() as i32, y.round() as i32);
             (f64::from(rx), f64::from(ry))
@@ -184,7 +187,8 @@ fn synthesize(view: &gtk::Widget, events: &[Synth]) -> Result<(), PageError> {
                 made
             }
         };
-        gtk::main_do_event(&mut made);
+        teller.tell(told, f64::from(time));
+        crate::takeover::delivering(|| gtk::main_do_event(&mut made));
     }
     Ok(())
 }

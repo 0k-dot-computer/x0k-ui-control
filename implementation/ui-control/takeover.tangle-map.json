@@ -1,0 +1,17 @@
+{
+  "source": "implementation/ui-control/takeover.md",
+  "source_hash": "a46b8b7c81f8dbc3",
+  "pipelines": [
+    {
+      "kind": "identity-tangle",
+      "input_hashes": {},
+      "config_hash": "23f74c1659402142",
+      "outputs": [
+        {
+          "path": "crates/x0k-ui-endpoint/src/takeover.rs",
+          "hash": "1ca139fd171e4528"
+        }
+      ]
+    }
+  ]
+}

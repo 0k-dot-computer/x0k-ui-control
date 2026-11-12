@@ -153,11 +153,13 @@ export function installAnswers(win: Window, hold: Hold, walk: Walk): Answers {
   /** What the page shows, as an observation names it. */
   const shownNow = (): Shown => (standing ? { kind: 'fixture', handle: standing.handle } : { kind: 'live' });
   const fixture = () => standing?.handle ?? null;
-  /** Stand `next`, and tell the page's listeners when the handle changed. */
+  /** Stand `next`, and tell the host's drawing layer and the page's listeners
+   * when the handle changed. */
   const stand = (next: typeof standing) => {
     const was = fixture();
     standing = next;
     if (fixture() === was) return;
+    hold.drawn.standing(fixture());
     for (const listener of [...listeners]) {
       try { listener(fixture()); } catch (e) { win.setTimeout(() => { throw e; }); }
     }

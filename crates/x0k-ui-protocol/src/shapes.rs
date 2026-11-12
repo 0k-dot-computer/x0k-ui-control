@@ -10,6 +10,7 @@ use crate::history::{HistoryAnswer, HistoryCall, NavigateAnswer, NavigateCall};
 use crate::input::{Perform, PerformAnswer};
 use crate::observe::{Observation, ObserveCall};
 use crate::offer::{Interface, Offer, SideEffect, UI_ACT, UI_INPUT, UI_OBSERVE};
+use crate::screencast::{CastAnswer, CastCall, DiscardAnswer, DiscardCall, FramesAnswer, FramesCall};
 
 /// `ui/observe`: the app's standing.
 pub const OFFER: &str = "ui/observe.offer";
@@ -28,15 +29,24 @@ pub const PRESENT: &str = "ui/history.present";
 /// `ui/history`: return from a state fixture to the live state.
 pub const RELEASE: &str = "ui/history.release";
 
+/// `ui/screencast`: play a run and keep its frames (`ui-screencast` §2).
+pub const CAST: &str = "ui/screencast.cast";
+/// `ui/screencast`: read frames of a screencast the endpoint holds.
+pub const FRAMES: &str = "ui/screencast.frames";
+/// `ui/screencast`: drop a screencast's frames.
+pub const DISCARD: &str = "ui/screencast.discard";
+
 /// The operations an endpoint serves.
-pub const OPERATIONS: [&str; 8] = [OFFER, OBSERVE, INVOKE, PERFORM, HISTORY, NAVIGATE, PRESENT, RELEASE];
+pub const OPERATIONS: [&str; 11] =
+    [OFFER, OBSERVE, INVOKE, PERFORM, HISTORY, NAVIGATE, PRESENT, RELEASE, CAST, FRAMES, DISCARD];
 
 /// The side-effect class `operation` declares (`ui-interfaces` §1). `invoke`
-/// has none of its own: it takes the class of the action it invokes.
+/// has none of its own: it takes the class of the action it invokes; nor has
+/// `cast`, which takes the highest among its run's steps.
 pub fn operation_class(operation: &str) -> Option<SideEffect> {
     match operation {
-        OFFER | OBSERVE | HISTORY => Some(SideEffect::ReadOnly),
-        NAVIGATE | PRESENT | RELEASE => Some(SideEffect::IdempotentWrite),
+        OFFER | OBSERVE | HISTORY | FRAMES => Some(SideEffect::ReadOnly),
+        NAVIGATE | PRESENT | RELEASE | DISCARD => Some(SideEffect::IdempotentWrite),
         PERFORM => Some(SideEffect::NonIdempotent),
         _ => None,
     }
@@ -64,6 +74,9 @@ pub fn operation_shapes() -> Vec<OperationShape> {
         shape(NAVIGATE, NavigateCall::spelling(), NavigateAnswer::spelling()),
         shape(PRESENT, PresentCall::spelling(), PresentAnswer::spelling()),
         shape(RELEASE, ReleaseCall::spelling(), ReleaseAnswer::spelling()),
+        shape(CAST, CastCall::spelling(), CastAnswer::spelling()),
+        shape(FRAMES, FramesCall::spelling(), FramesAnswer::spelling()),
+        shape(DISCARD, DiscardCall::spelling(), DiscardAnswer::spelling()),
     ]
 }
 
@@ -98,7 +111,8 @@ pub fn interface(name: &str) -> Option<Interface> {
 }
 
 /// The interfaces every app built on these operations answers. An app that
-/// keeps a history adds `ui/history` with [`interface`].
+/// keeps a history adds `ui/history` with [`interface`], and one that makes
+/// screencasts `ui/screencast`.
 pub fn interfaces() -> Vec<Interface> {
     [UI_OBSERVE, UI_ACT, UI_INPUT].into_iter().filter_map(interface).collect()
 }

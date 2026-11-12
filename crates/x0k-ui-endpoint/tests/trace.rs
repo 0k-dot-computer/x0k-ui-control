@@ -36,6 +36,8 @@ impl UiApp for Offers {
             replay_policy: Vec::new(),
             sandboxes: Vec::new(),
             input: None,
+            dev_instance: false,
+            screencast: None,
         }
     }
 

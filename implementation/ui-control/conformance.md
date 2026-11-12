@@ -175,6 +175,18 @@ draws input keeps the watchable pace: a click at that pace answers no sooner
 than `WATCHABLE_PRESS_MS` after it was sent. A host that draws nothing cannot
 show a pace, so for it that claim is unreachable.
 
+Who allows a takeover is the host's configuration of its endpoint
+(`x0k:implementation/ui-control/takeover`), which the app does not state, so
+the runner says it: `--takeover refuse` or `--takeover allow` names the answer
+the host was configured to give every takeover. Under `refuse`, a takeover is
+refused as `takeover_not_granted`, naming the requester and the configuration,
+before any of the sequence runs. Under `allow`, the takeover holds without an
+ask, so the sequence runs and answers sooner than a person's ask could time
+out. With no answer named, or for an offer that holds no takeover, the claim
+is unreachable. That the hold is shown while it stands is the host's to hold
+in its own tests: the suite's sequence is one pause, held too briefly to
+capture.
+
 **A window the host cannot paint, and kinds it cannot deliver.** The suite
 asks for a capture first. When the capture is refused as `cannot_paint`, the
 app says its host cannot paint its window now (§8), and the
@@ -199,9 +211,18 @@ delivered, or refused as `undeliverable_source` naming its kind, or as
 not have (§10).
 
 **What an app declines.** An app may decline a `present`, and an action or
-input under a fixture, for now, with its reason (`ui-interfaces` §4). The
-suite cannot make an app decline, and a decline is not a broken promise, so a
-claim whose call is declined is reported unreachable with the app's reason.
+input under a fixture, for now, with its reason (`ui-interfaces` §4). It may
+also decline a driver's sequence of input at any time, live too, such as while
+a person uses the window (`ui-control-channel` §10, "Declining input for
+now"). The suite cannot make an app decline, and a decline is not a broken
+promise, so a claim whose call is declined is reported unreachable with the
+app's reason. A sequence is declined after every other check, so the input
+claims that expect a refusal still hold of an app that declines: the refusing
+vectors, an unheld takeover, input while the host cannot paint or while the
+past is shown. The claims that need a sequence to run or to reach a takeover's
+answer are the ones a decline takes away: a pointer move to a layout node, the
+watchable pace, a configured takeover, and every source kind, which is
+unreachable when the app declines any kind and refuses none wrongly.
 
 **A fixture the app ends.** An app may end the suite's fixture itself, with
 its reason, such as when an approval arrives for a person (`ui-interfaces`
@@ -240,7 +261,7 @@ the present vectors hold the misfit check itself. The fixture the suite presents
 is the live state, so the suite holds that a fixture is shown and named, not that
 a different state reaches the screen.
 
-<a name="chunk-suite"></a><sub>[`src/conformance.rs`](../../crates/x0k-ui-endpoint/src/conformance.rs) · `#suite` · assembles [at-a-past-position](#chunk-at-a-past-position) · [under-a-fixture](#chunk-under-a-fixture) · [driving-under-a-fixture](#chunk-driving-under-a-fixture)</sub>
+<a name="chunk-suite"></a><sub>[`src/conformance.rs`](../../crates/x0k-ui-endpoint/src/conformance.rs) · `#suite` · assembles [at-a-past-position](#chunk-at-a-past-position) · [under-a-fixture](#chunk-under-a-fixture) · [driving-under-a-fixture](#chunk-driving-under-a-fixture) · [suite-screencast](#chunk-suite-screencast)</sub>
 
 ```rust {#suite file="src/conformance.rs"}
 //! The UI-control suite, over the endpoint alone (`ui-control-channel` §8 to §10).
@@ -260,15 +281,20 @@ use x0k_ui_protocol::history::{
     check_history, check_history_offer, Destination, History, HistoryAnswer, HistoryCall, NavigateAnswer,
     NavigateCall, Shown,
 };
-use x0k_ui_protocol::input::{HeldFrame, Pace, Perform, Source, Step, Target, SOURCE_KINDS, WATCHABLE_PRESS_MS};
+use x0k_ui_protocol::input::{
+    HeldFrame, Pace, Perform, Source, Step, Target, SOURCE_KINDS, TAKEOVER_ASK_MS, WATCHABLE_PRESS_MS,
+};
 use x0k_ui_protocol::observe::{check_observation, LayoutNode, Observation, ObserveCall, Part, Region, StatePart};
 use x0k_ui_protocol::offer::{Offer, SideEffect, UI_ACT, UI_HISTORY, UI_INPUT, UI_OBSERVE};
+use x0k_ui_protocol::presentation::{FIXTURE_BAND, FIXTURE_INK};
 use x0k_ui_protocol::replay::{check_replay_policy, disposition, Purpose, ReplayDisposition};
+use x0k_ui_protocol::screencast::{check_screencast_offer, CastCall, Clock, FramePart, FramesCall};
 use x0k_ui_protocol::shapes::interface_fingerprint;
 use x0k_ui_protocol::{Refused, RefusalCode, INPUT_VECTORS};
 
 use crate::client::{ClientFault, UiClient};
-use crate::{InvokeAnswer, PerformAnswer};
+use crate::takeover::HoldAnswer;
+use crate::{CastAnswer, FramesAnswer, InvokeAnswer, PerformAnswer};
 
 /// An action no app offers.
 const NO_SUCH_ACTION: &str = "ui-conformance.no-such-action";
@@ -339,6 +365,9 @@ pub struct Options {
     pub act: Option<Invoke>,
     /// Where the app's work in a caller's trace can be seen.
     pub trace: Option<TraceWitness>,
+    /// The answer the host's configuration gives every takeover, as the
+    /// runner says it built the app.
+    pub takeover: Option<HoldAnswer>,
 }
 
 #[derive(Deserialize)]
@@ -405,9 +434,11 @@ pub async fn run(client: &UiClient, options: &Options) -> Result<Report, ClientF
         suite.acting(&offer, options).await;
     }
     suite.input(&offer).await;
+    suite.a_configured_takeover(&offer, options.takeover).await;
     suite.going_back(&offer, options).await;
     suite.its_replay_policy(&offer);
     suite.fixtures(&offer, options).await;
+    suite.screencasts(&offer).await;
     Ok(Report { app: offer.app, cases: suite.cases })
 }
 
@@ -659,7 +690,7 @@ impl Suite<'_> {
         if !offer.answers(UI_INPUT) {
             return self.record("§10", claim, Verdict::Unreachable("the offer does not name ui/input".to_string()));
         }
-        let mut broken = None;
+        let (mut broken, mut declining) = (None, None);
         for kind in SOURCE_KINDS {
             let pause = Source { id: "source".to_string(), kind: kind.to_string(), steps: vec![Step::Pause { ms: 1 }] };
             broken = match self.client.perform(&Perform::of(vec![pause])).await {
@@ -670,6 +701,10 @@ impl Suite<'_> {
                 {
                     None
                 }
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    declining = Some(refused);
+                    None
+                }
                 Ok(other) => Some(format!("a {kind} was answered {other:?}")),
                 Err(fault) => Some(fault.to_string()),
             };
@@ -677,7 +712,10 @@ impl Suite<'_> {
                 break;
             }
         }
-        self.check("§10", claim, broken);
+        match declining {
+            Some(refused) if broken.is_none() => self.record("§10", claim, declined(&refused)),
+            _ => self.check("§10", claim, broken),
+        }
     }
 
     async fn acting(&mut self, offer: &Offer, options: &Options) {
@@ -813,6 +851,45 @@ impl Suite<'_> {
         self.check("§10", claim, broken);
     }
 
+    async fn a_configured_takeover(&mut self, offer: &Offer, configured: Option<HoldAnswer>) {
+        let claim = "a takeover is answered as the host's configuration says, before any of the sequence runs";
+        if !offer.input.is_some_and(|input| input.takeover) {
+            let why = "the offer does not say the app holds a takeover".to_string();
+            return self.record("§10", claim, Verdict::Unreachable(why));
+        }
+        let pause = Source { id: "keys".to_string(), kind: "key".to_string(), steps: vec![Step::Pause { ms: 1 }] };
+        let perform = Perform { takeover: true, ..Perform::of(vec![pause]) };
+        let started = std::time::Instant::now();
+        let broken = match configured {
+            Some(HoldAnswer::Refuse) => match self.client.perform(&perform).await {
+                Ok(PerformAnswer::Refused(refused))
+                    if refused.code == RefusalCode::TakeoverNotGranted && refused.why.contains("configuration") =>
+                {
+                    None
+                }
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    return self.record("§10", claim, declined(&refused));
+                }
+                Ok(other) => Some(format!("configured to refuse, answered {other:?}")),
+                Err(fault) => Some(fault.to_string()),
+            },
+            Some(HoldAnswer::Allow) => match self.client.perform(&perform).await {
+                Ok(PerformAnswer::Done { .. }) if started.elapsed().as_millis() < u128::from(TAKEOVER_ASK_MS) => None,
+                Ok(PerformAnswer::Done { .. }) => Some(format!("answered after {:?}, as an ask would", started.elapsed())),
+                Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                    return self.record("§10", claim, declined(&refused));
+                }
+                Ok(other) => Some(format!("configured to allow, answered {other:?}")),
+                Err(fault) => Some(fault.to_string()),
+            },
+            Some(HoldAnswer::Ask) | None => {
+                let why = "the runner names no configured answer, and only a person answers an ask".to_string();
+                return self.record("§10", claim, Verdict::Unreachable(why));
+            }
+        };
+        self.check("§10", claim, broken);
+    }
+
     async fn the_watchable_pace(&mut self, offer: &Offer, live: &LiveFrame) {
         let claim = "a click at the watchable pace answers no sooner than its floor";
         if !offer.input.is_some_and(|input| input.presents) {
@@ -828,6 +905,9 @@ impl Suite<'_> {
             Ok(PerformAnswer::Done { .. }) => {
                 let took = started.elapsed().as_millis() as u64;
                 (took < WATCHABLE_PRESS_MS).then(|| format!("answered in {took} ms, under the floor of {WATCHABLE_PRESS_MS} ms"))
+            }
+            Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                return self.record("§10", claim, declined(&refused));
             }
             Ok(other) => Some(format!("{other:?}")),
             Err(fault) => Some(fault.to_string()),
@@ -879,6 +959,9 @@ impl Suite<'_> {
         let source = Source { id: "pointer".to_string(), kind: "mouse".to_string(), steps: vec![step] };
         let broken = match self.client.perform(&Perform::of(vec![source])).await {
             Ok(PerformAnswer::Done { frame: Some(_) }) => None,
+            Ok(PerformAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => {
+                return self.record("§10", claim, declined(&refused));
+            }
             Ok(other) => Some(format!("{other:?}")),
             Err(fault) => Some(fault.to_string()),
         };
@@ -999,6 +1082,8 @@ impl Suite<'_> {
 <<under-a-fixture>>
 
 <<driving-under-a-fixture>>
+
+<<suite-screencast>>
 
 /// Whether an oversized frame from a peer costs that connection and not the app.
 pub async fn an_oversized_frame(socket: &Path) -> Case {
@@ -1699,7 +1784,7 @@ fn why_unreadable() -> String {
 }
 
 fn present_call(fixture: Fixture, fingerprint: &str, if_match: Option<&str>) -> PresentCall {
-    PresentCall { fixture, fingerprint: fingerprint.to_string(), if_match: if_match.map(str::to_string) }
+    PresentCall { fixture, fingerprint: fingerprint.to_string(), if_match: if_match.map(str::to_string), mark: None }
 }
 
 /// How `answer` differs from a refusal of `code` about `subject`, if it does.
@@ -1754,6 +1839,240 @@ pub async fn a_session_end_releases_its_fixture(socket: &Path) -> Case {
 }
 ```
 
+### A screencast
+
+`x0k:architecture/ui-screencast` §3 and §9, and `ui-interfaces` §4 and §5, make
+six claims a suite can test without playing a screencast. The offer says how
+the app keeps time exactly when it names `ui/screencast`, and never lists
+`sampled`. A `present` asking `mark: false` of an instance that is not a dev
+instance is refused as `mark_required`, which any app that takes fixtures can
+show. And an app that names `ui/screencast` refuses a cast naming `sampled`,
+which no app offers, as `unoffered_clock` naming `sampled`, and a `frames`
+call for a handle it never cast, as `unknown_screencast`. None of them holds a window or plays a run, so the suite
+asks them of every app; the endpoint's own test holds what a run does
+(`x0k:implementation/ui-control/endpoint-screencast`).
+
+The fixture mark is ink, so the suite reads it in pixels. Every host draws it
+alike (`x0k:implementation/ui-control/protocol`, "What a host draws of
+input"): a band `FIXTURE_BAND` units wide around the window in
+`FIXTURE_INK`. So the suite reads one pixel, in the middle of the band's
+width at the window's left edge, halfway down, at the capture's scale. While
+a fixture it presented stands, a capture with the host's drawing shows the
+ink there and a capture of the frame alone does not, which is the probe
+page's ink test made of any app's own window. An app whose host does not say
+it presents input, or that gives no capture, leaves the claim unreachable.
+In a dev instance, a `present` asking `mark: false` is honoured: the fixture
+stands, and a capture with the host's drawing shows no ink there.
+
+<a name="chunk-suite-screencast"></a><sub>[`src/conformance.rs`](../../crates/x0k-ui-endpoint/src/conformance.rs) · `#suite-screencast`</sub>
+
+```rust {#suite-screencast}
+/// A handle no endpoint casts.
+const NO_SUCH_SCREENCAST: &str = "ui-conformance.no-such-screencast";
+const UI_SCREENCAST_3: &str = "ui-screencast §3";
+const UI_SCREENCAST_2: &str = "ui-screencast §2";
+
+impl Suite<'_> {
+    async fn screencasts(&mut self, offer: &Offer) {
+        let claim = "the offer says how the app keeps time for a screencast exactly when it names ui/screencast, and never offers sampled";
+        let broken = check_screencast_offer(offer).err().map(|fault| format!("{fault:?}"));
+        self.check(UI_SCREENCAST_3, claim, broken);
+        self.marking(offer).await;
+        let (sampled, unknown) = (
+            "a cast naming the sampled clock is refused as unoffered_clock before anything plays",
+            "frames for a handle the endpoint never cast is refused as unknown_screencast",
+        );
+        if !offer.answers(x0k_ui_protocol::offer::UI_SCREENCAST) {
+            let why = "the offer does not name ui/screencast".to_string();
+            self.record(UI_SCREENCAST_3, sampled, Verdict::Unreachable(why.clone()));
+            return self.record(UI_SCREENCAST_2, unknown, Verdict::Unreachable(why));
+        }
+        let call = CastCall {
+            run: Vec::new(),
+            fps: 10,
+            max_ms: 100,
+            settle_ms: 0,
+            clock: Some(Clock::Sampled),
+            parts: vec![FramePart::State],
+            region: None,
+            scale: None,
+            presented: false,
+            date: None,
+        };
+        let broken = match self.client.cast(&call, std::time::Duration::from_secs(30)).await {
+            Ok(CastAnswer::Refused(refused))
+                if refused.code == RefusalCode::UnofferedClock && refused.subject.as_deref() == Some("sampled") =>
+            {
+                None
+            }
+            Ok(other) => Some(format!("answered {other:?}")),
+            Err(fault) => Some(fault.to_string()),
+        };
+        self.check(UI_SCREENCAST_3, sampled, broken);
+        let frames = FramesCall {
+            handle: NO_SUCH_SCREENCAST.to_string(),
+            indices: vec![0],
+            parts: vec![FramePart::State],
+            region: None,
+            scale: None,
+        };
+        let broken = match self.client.frames(&frames).await {
+            Ok(FramesAnswer::Refused(refused))
+                if refused.code == RefusalCode::UnknownScreencast && refused.subject.as_deref() == Some(NO_SUCH_SCREENCAST) =>
+            {
+                None
+            }
+            Ok(other) => Some(format!("answered {other:?}")),
+            Err(fault) => Some(fault.to_string()),
+        };
+        self.check(UI_SCREENCAST_2, unknown, broken);
+    }
+
+    /// `ui-interfaces` §4: the fixture mark, and `mark: false` in and outside
+    /// a dev instance.
+    async fn marking(&mut self, offer: &Offer) {
+        self.mark_required(offer).await;
+        self.mark_drawn(offer).await;
+        self.mark_left_off(offer).await;
+    }
+
+    /// `mark: false` outside a dev instance.
+    async fn mark_required(&mut self, offer: &Offer) {
+        let claim = "a present asking mark: false of an instance that is not a dev instance is refused as mark_required";
+        let takes = offer.answers(UI_HISTORY) && offer.history.as_ref().is_some_and(|held| held.fixtures);
+        if !takes || offer.dev_instance {
+            let why = match takes {
+                false => "the app takes no state fixtures",
+                true => "the app runs as a dev instance, which honours mark: false",
+            };
+            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why.to_string()));
+        }
+        let Some(live) = self.live_state().await else {
+            let why = "the app answers no state to write a fixture against".to_string();
+            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
+        };
+        let mut call = present_call(Fixture::Patch { patch: json!({}) }, &live.fingerprint, Some(&live.head));
+        call.mark = Some(false);
+        let answer = self.client.present(&call).await;
+        if let Ok(PresentAnswer::Presented { handle, .. }) = &answer {
+            let _ = self.client.release(&ReleaseCall { handle: handle.clone() }).await;
+        }
+        let broken = refused_as(answer, RefusalCode::MarkRequired, Some(UI_HISTORY));
+        self.check(UI_INTERFACES_4, claim, broken);
+    }
+
+    /// The handle of a fixture `present` shows, asking `mark` of it, over the
+    /// live state; or the verdict when none can be shown.
+    async fn marked_fixture(&mut self, offer: &Offer, mark: Option<bool>) -> Result<String, Verdict> {
+        let takes = offer.answers(UI_HISTORY) && offer.history.as_ref().is_some_and(|held| held.fixtures);
+        if !takes {
+            return Err(Verdict::Unreachable("the app takes no state fixtures".to_string()));
+        }
+        if !offer.input.is_some_and(|input| input.presents) {
+            return Err(Verdict::Unreachable("the offer does not say the host draws over the window".to_string()));
+        }
+        let Some(live) = self.live_state().await else {
+            return Err(Verdict::Unreachable("the app answers no state to write a fixture against".to_string()));
+        };
+        let mut call = present_call(Fixture::Patch { patch: json!({}) }, &live.fingerprint, Some(&live.head));
+        call.mark = mark;
+        match self.client.present(&call).await {
+            Ok(PresentAnswer::Presented { handle, .. }) => Ok(handle),
+            Ok(PresentAnswer::Refused(refused)) if refused.code == RefusalCode::Declined => Err(declined(&refused)),
+            Ok(other) => Err(Verdict::Broken(format!("the fixture was not presented: {other:?}"))),
+            Err(fault) => Err(Verdict::Broken(fault.to_string())),
+        }
+    }
+
+    /// Whether a capture, with the host's drawing or of the frame alone,
+    /// shows the fixture mark's ink where its band lies.
+    async fn band_inked(&mut self, frame_only: bool) -> Result<bool, Verdict> {
+        let call = ObserveCall { parts: vec![Part::Capture], region: None, scale: None, frame_only };
+        let observation = match self.client.observe(&call).await {
+            Ok(observation) => observation,
+            Err(fault) => return Err(Verdict::Broken(fault.to_string())),
+        };
+        let Some(capture) = observation.capture else {
+            return Err(Verdict::Unreachable("the app gave no capture".to_string()));
+        };
+        let x = (FIXTURE_BAND / 2.0 * capture.scale_factor).round() as u32;
+        match pixel(&capture.png, x, capture.height / 2) {
+            Ok(seen) => Ok(seen == FIXTURE_INK),
+            Err(fault) => Err(Verdict::Broken(format!("the capture does not read: {fault}"))),
+        }
+    }
+
+    /// The mark drawn while a fixture stands, in the host's drawing alone.
+    async fn mark_drawn(&mut self, offer: &Offer) {
+        let claim = "while a fixture stands, a capture with the host's drawing shows the fixture mark, and the frame alone does not";
+        let handle = match self.marked_fixture(offer, None).await {
+            Ok(handle) => handle,
+            Err(verdict) => return self.record(UI_INTERFACES_4, claim, verdict),
+        };
+        let (drawn, alone) = (self.band_inked(false).await, self.band_inked(true).await);
+        let _ = self.client.release(&ReleaseCall { handle }).await;
+        let verdict = match (drawn, alone) {
+            (Err(verdict), _) | (_, Err(verdict)) => verdict,
+            (Ok(true), Ok(false)) => Verdict::Holds,
+            (Ok(false), _) => Verdict::Broken("a capture with the host's drawing shows no fixture mark".to_string()),
+            (Ok(true), Ok(true)) => Verdict::Broken("a capture of the frame alone shows the fixture mark".to_string()),
+        };
+        self.record(UI_INTERFACES_4, claim, verdict);
+    }
+
+    /// `mark: false` honoured in a dev instance.
+    async fn mark_left_off(&mut self, offer: &Offer) {
+        let claim = "a dev instance honours a present asking mark: false: the fixture stands, and no capture shows the fixture mark";
+        if !offer.dev_instance {
+            let why = "the app is no dev instance, which refuses mark: false".to_string();
+            return self.record(UI_INTERFACES_4, claim, Verdict::Unreachable(why));
+        }
+        let handle = match self.marked_fixture(offer, Some(false)).await {
+            Ok(handle) => handle,
+            Err(verdict) => return self.record(UI_INTERFACES_4, claim, verdict),
+        };
+        let drawn = self.band_inked(false).await;
+        let _ = self.client.release(&ReleaseCall { handle }).await;
+        let verdict = match drawn {
+            Err(verdict) => verdict,
+            Ok(false) => Verdict::Holds,
+            Ok(true) => Verdict::Broken("a fixture presented with mark: false shows the fixture mark".to_string()),
+        };
+        self.record(UI_INTERFACES_4, claim, verdict);
+    }
+}
+
+/// Why a capture's pixel cannot be read.
+#[derive(Debug, thiserror::Error)]
+enum PixelFault {
+    #[error("the PNG does not decode: {0}")]
+    Decode(#[from] png::DecodingError),
+    #[error("({x}, {y}) lies outside the {width}x{height} image")]
+    Outside { x: u32, y: u32, width: u32, height: u32 },
+    #[error("the image ends before the pixel")]
+    Short,
+}
+
+/// The colour of the pixel at (`x`, `y`) of `png`, as `[r, g, b]`.
+fn pixel(png: &[u8], x: u32, y: u32) -> Result<[u8; 3], PixelFault> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info()?;
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut pixels)?;
+    if x >= info.width || y >= info.height {
+        return Err(PixelFault::Outside { x, y, width: info.width, height: info.height });
+    }
+    let channels = info.color_type.samples();
+    let at = y as usize * info.line_size + x as usize * channels;
+    let sample = |offset: usize| pixels.get(at + offset).copied().ok_or(PixelFault::Short);
+    match info.color_type {
+        png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => Ok([sample(0)?; 3]),
+        _ => Ok([sample(0)?, sample(1)?, sample(2)?]),
+    }
+}
+```
+
 ## The program
 
 The target is a Unix socket, a `ws://` URL, or the first peer to dial `--listen`.
@@ -1776,15 +2095,17 @@ not run.
 `--trace-witness <program>` names the witness for the trace: the program is run
 with the suite's `traceparent` as its one argument, and exits zero when the app's
 work joined that trace. It waits for the app's spans itself, since only it knows
-how they travel.
+how they travel. `--takeover <refuse | allow>` names the answer the host's
+configuration gives every takeover. The options come before the target, in
+either order.
 
 <a name="chunk-program"></a><sub>[`src/bin/ui-conformance.rs`](../../crates/x0k-ui-endpoint/src/bin/ui-conformance.rs) · `#program`</sub>
 
 ```rust {#program file="src/bin/ui-conformance.rs"}
 //! Hold an app to the UI-control suite.
 //!
-//! `ui-conformance [--trace-witness <program>] <socket | ws://address | --listen address
-//! | --json-lines socket> [<action> [<arguments as JSON>]]`
+//! `ui-conformance [--trace-witness <program>] [--takeover <refuse | allow>] <socket | ws://address
+//! | --listen address | --json-lines socket> [<action> [<arguments as JSON>]]`
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -1797,11 +2118,12 @@ use x0k_ui_endpoint::conformance::{
     a_session_end_releases_its_fixture, a_session_end_returns_to_live, an_oversized_frame, run, Options, Report,
     TraceWitness, Verdict,
 };
+use x0k_ui_endpoint::takeover::HoldAnswer;
 #[cfg(feature = "websocket")]
 use x0k_operation_session::websocket::{accept_websocket, dial_websocket, websocket_listener};
 use x0k_ui_protocol::act::Invoke;
 
-const USAGE: &str = "usage: ui-conformance [--trace-witness <program>] \
+const USAGE: &str = "usage: ui-conformance [--trace-witness <program>] [--takeover <refuse | allow>] \
      <socket | ws://address | --listen address | --json-lines socket> [<action> [<arguments as JSON>]]";
 
 /// Where the app is.
@@ -1889,11 +2211,15 @@ fn witness_program(program: String) -> TraceWitness {
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1).peekable();
-    let mut trace = None;
-    if args.peek().map(String::as_str) == Some("--trace-witness") {
-        args.next();
-        trace = args.next().map(witness_program);
-        if trace.is_none() {
+    let (mut trace, mut takeover) = (None, None);
+    while let Some(option) = args.next_if(|arg| arg == "--trace-witness" || arg == "--takeover") {
+        let read = match (option.as_str(), args.next()) {
+            ("--trace-witness", Some(program)) => trace.replace(witness_program(program)).is_none(),
+            (_, Some(answer)) if answer == "refuse" => takeover.replace(HoldAnswer::Refuse).is_none(),
+            (_, Some(answer)) if answer == "allow" => takeover.replace(HoldAnswer::Allow).is_none(),
+            _ => false,
+        };
+        if !read {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
@@ -1911,7 +2237,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let options = Options { act: action.map(|action| Invoke { action, args: arguments }), trace };
+    let options = Options { act: action.map(|action| Invoke { action, args: arguments }), trace, takeover };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
     let outcome = match runtime {
         Ok(runtime) => runtime.block_on(suite(&target, &options)),
@@ -1947,8 +2273,9 @@ with no session to end, stays where the last session left it.
 
 `Faithful` also keeps its promises under a condition: a window that is not
 visible, a host that delivers no touch or pen, a fixture it declines,
-actions and input it declines under one, and a fixture it ends itself once it
-has been observed. Under each it breaks nothing; the
+actions and input it declines under one, a fixture it ends itself once it
+has been observed, and every driver's sequence declined for now, live too,
+as while a person uses the window. Under each it breaks nothing; the
 claims the condition reaches hold, and the ones it takes away are
 unreachable with the app's reason.
 
@@ -1971,6 +2298,7 @@ use x0k_ui_endpoint::conformance::{
     Verdict,
 };
 use x0k_ui_endpoint::server::{listen, serve_connection, Declinable, Endpoint, UiApp};
+use x0k_ui_endpoint::takeover::{HoldAnswer, TakeoverPolicy};
 use x0k_ui_endpoint::wire::to_wire;
 use x0k_ui_endpoint::{
     shapes, InvokeAnswer, PerformAnswer, PresentAnswer, ReleaseAnswer, INVOKE, OFFER, PERFORM, PRESENT, RELEASE,
@@ -1986,6 +2314,7 @@ use x0k_ui_protocol::observe::{
     Bounds, Capture, LayoutNode, Observation, ObserveCall, Part, StatePart,
 };
 use x0k_ui_protocol::offer::{Action, Offer, SideEffect, UI_HISTORY};
+use x0k_ui_protocol::presentation::{FIXTURE_BAND, FIXTURE_INK};
 use x0k_ui_protocol::replay::{Covers, PolicyEntry, ReplayDisposition};
 use x0k_ui_protocol::shapes::{interface, interfaces, shape_pin};
 use x0k_ui_protocol::{Refused, RefusalCode};
@@ -2034,6 +2363,12 @@ enum Flaw {
     PresentsFrameOnly,
     /// Says it draws input, and answers a watchable sequence at once.
     HastyPace,
+    /// Draws the fixture mark into the frame alone too.
+    MarkInFrame,
+    /// Draws no fixture mark.
+    Unmarked,
+    /// Marks a fixture a dev instance was asked to leave unmarked.
+    MarksRegardless,
 }
 
 /// A condition `Faithful` keeps its promises under.
@@ -2052,12 +2387,18 @@ enum Condition {
     /// It ends a fixture itself once it has been observed, as when an
     /// approval arrives for a person.
     EndsFixture,
+    /// Its host holds a takeover, and no person is at the window to answer.
+    HoldsTakeover,
+    /// It runs as a dev instance.
+    DevInstance,
 }
 
 /// Why `Faithful` declines.
 const APPROVAL: &str = "an approval waits for a person";
 /// Why `Faithful` ends a fixture itself.
 const ARRIVED: &str = "an approval arrived for a person";
+/// Why `Faithful` declines a driver's input, when it does.
+const PERSON: &str = "the person is using the window";
 
 /// The positions `Faithful` holds, of the six it has had.
 const OLDEST: u64 = 3;
@@ -2077,6 +2418,10 @@ struct Faithful {
     beside: Mutex<Vec<String>>,
     /// The fixture it ended itself, under `EndsFixture`.
     ended: Mutex<Option<String>>,
+    /// Whether it declines every driver's sequence for now, whatever it shows.
+    declines_input: bool,
+    /// The fixture its host marks over the window, drawn while it is shown.
+    marked: Mutex<Option<String>>,
 }
 
 /// `Faithful`'s state shape: a closed record of one count.
@@ -2097,11 +2442,19 @@ impl Faithful {
             fixture: Mutex::new(Value::Null),
             beside: Mutex::new(Vec::new()),
             ended: Mutex::new(None),
+            declines_input: false,
+            marked: Mutex::new(None),
         }
     }
 
     fn under(condition: Condition) -> Self {
         Faithful { condition, ..Faithful::new(Flaw::None) }
+    }
+
+    /// The same app, declining every driver's sequence for now, as while a
+    /// person uses the window.
+    fn declining_input(self) -> Self {
+        Faithful { declines_input: true, ..self }
     }
 
     fn live(&self) -> StatePart {
@@ -2112,16 +2465,36 @@ impl Faithful {
     fn showing(&self) -> Shown {
         self.shown.lock().expect("the lock").clone()
     }
+
+    /// Whether a capture, of the frame alone when `frame_only`, shows the
+    /// fixture mark: while the fixture its host marks is shown, in the host's
+    /// drawing alone.
+    fn shows_mark(&self, frame_only: bool) -> bool {
+        let marked = self.marked.lock().expect("the lock").clone();
+        let standing = matches!((marked, self.showing()), (Some(marked), Shown::Fixture { handle }) if marked == handle);
+        standing && (!frame_only || self.flaw == Flaw::MarkInFrame)
+    }
 }
 
 const WIDTH: u32 = 400;
 const HEIGHT: u32 = 300;
 
-fn png_of(width: u32, height: u32) -> Vec<u8> {
-    let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13];
-    png.extend_from_slice(b"IHDR");
-    png.extend_from_slice(&width.to_be_bytes());
-    png.extend_from_slice(&height.to_be_bytes());
+/// A white PNG `width` by `height`, with the fixture mark's band around it
+/// when `marked`.
+fn png_of(width: u32, height: u32, marked: bool) -> Vec<u8> {
+    let band = FIXTURE_BAND as u32;
+    let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let edge = x < band || y < band || x + band >= width || y + band >= height;
+            rgb.extend_from_slice(&if marked && edge { FIXTURE_INK } else { [255, 255, 255] });
+        }
+    }
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header().and_then(|mut writer| writer.write_image_data(&rgb)).expect("a PNG");
     png
 }
 
@@ -2137,6 +2510,7 @@ fn layout(width: f64) -> LayoutNode {
         enabled: true,
         focused: false,
         interactive: false,
+        opacity: None,
         action: None,
         source: None,
         composition: None,
@@ -2166,6 +2540,8 @@ fn offer_of(head: u64, newest: u64) -> Offer {
         replay_policy: Vec::new(),
         sandboxes: Vec::new(),
         input: Some(InputOffer { presents: true, takeover: false }),
+        dev_instance: false,
+        screencast: None,
     }
 }
 
@@ -2189,7 +2565,15 @@ impl UiApp for Faithful {
                 sandbox: Some("scratch".to_string()),
             }];
         }
+        if self.condition == Condition::HoldsTakeover {
+            offer.input = Some(InputOffer { presents: true, takeover: true });
+        }
+        offer.dev_instance = self.condition == Condition::DevInstance;
         offer
+    }
+
+    async fn hold_takeover(&self, _requester: &str) -> bool {
+        self.condition == Condition::HoldsTakeover
     }
 
     async fn observe(&self, call: ObserveCall) -> Observation {
@@ -2200,7 +2584,7 @@ impl UiApp for Faithful {
         let whole_frame = call.scale.is_none() && call.region.is_none();
         let capture = wants(Part::Capture) && whole_frame;
         let answer = Capture {
-            png: if self.flaw == Flaw::CaptureSize { png_of(1, 1) } else { png_of(WIDTH, HEIGHT) },
+            png: if self.flaw == Flaw::CaptureSize { png_of(1, 1, false) } else { png_of(WIDTH, HEIGHT, self.shows_mark(call.frame_only)) },
             width: WIDTH,
             height: HEIGHT,
             scale_factor: 1.0,
@@ -2313,11 +2697,13 @@ impl UiApp for Faithful {
         Some(self.live())
     }
 
-    async fn present(&self, state: Value) -> PresentAnswer {
+    async fn present(&self, state: Value, marked: bool) -> PresentAnswer {
         if self.condition == Condition::DeclinesFixtures {
             return PresentAnswer::Refused(Refused::new(RefusalCode::Declined, UI_HISTORY, APPROVAL));
         }
         let handle = format!("x{}", self.presented.fetch_add(1, Ordering::Relaxed) + 1);
+        let marks = (marked || self.flaw == Flaw::MarksRegardless) && self.flaw != Flaw::Unmarked;
+        *self.marked.lock().expect("the lock") = marks.then(|| handle.clone());
         if self.flaw == Flaw::FixtureMovesLive {
             self.head.fetch_add(1, Ordering::Relaxed);
         }
@@ -2360,6 +2746,10 @@ impl UiApp for Faithful {
         (self.condition == Condition::DeclinesUnderFixture).then(|| APPROVAL.to_string())
     }
 
+    async fn declines_input(&self, _requester: &str, _perform: &Perform) -> Option<String> {
+        self.declines_input.then(|| PERSON.to_string())
+    }
+
     async fn fixture_ended(&self, handle: &str) -> Option<String> {
         let ended = self.ended.lock().expect("the lock");
         (ended.as_deref() == Some(handle)).then(|| ARRIVED.to_string())
@@ -2381,6 +2771,38 @@ async fn report_of_app(app: Faithful) -> Report {
     tokio::spawn(serve_connection(theirs, Arc::new(Endpoint::new(app, grant))));
     let client = UiClient::open(ours).await.expect("a session");
     run(&client, &acting()).await.expect("a report")
+}
+
+const CONFIGURED_TAKEOVER: &str = "a takeover is answered as the host's configuration says, before any of the sequence runs";
+
+/// The verdict on the configured takeover of an app whose host holds one,
+/// configured by `policy`, when the runner says it was configured to `said`.
+async fn configured_takeover(policy: TakeoverPolicy, said: Option<HoldAnswer>) -> Verdict {
+    configured_takeover_of(Faithful::under(Condition::HoldsTakeover), policy, said).await
+}
+
+/// The verdict on the configured takeover of `app`, as `configured_takeover`.
+async fn configured_takeover_of(app: Faithful, policy: TakeoverPolicy, said: Option<HoldAnswer>) -> Verdict {
+    let (ours, theirs) = tokio::io::duplex(1 << 20);
+    let endpoint = Endpoint::new(app, Grant { classes: vec![] });
+    tokio::spawn(serve_connection(theirs, Arc::new(endpoint.with_takeover(policy))));
+    let client = UiClient::open(ours).await.expect("a session");
+    let report = run(&client, &Options { takeover: said, ..Options::default() }).await.expect("a report");
+    let case = report.cases.into_iter().find(|case| case.claim == CONFIGURED_TAKEOVER);
+    case.expect("the claim was recorded").verdict
+}
+
+#[tokio::test]
+async fn a_takeover_answered_as_the_runner_says_the_host_is_configured_holds() {
+    let refuses = TakeoverPolicy::default().otherwise(HoldAnswer::Refuse);
+    assert_eq!(configured_takeover(refuses, Some(HoldAnswer::Refuse)).await, Verdict::Holds);
+    let allows = TakeoverPolicy::default().otherwise(HoldAnswer::Allow);
+    assert_eq!(configured_takeover(allows, Some(HoldAnswer::Allow)).await, Verdict::Holds);
+    let refuses = TakeoverPolicy::default().otherwise(HoldAnswer::Refuse);
+    let verdict = configured_takeover(refuses, Some(HoldAnswer::Allow)).await;
+    assert!(matches!(verdict, Verdict::Broken(_)), "a host that refuses was held to allow: {verdict:?}");
+    let verdict = configured_takeover(TakeoverPolicy::default(), None).await;
+    assert!(matches!(verdict, Verdict::Unreachable(_)), "no configuration named: {verdict:?}");
 }
 
 fn broken_claims(report: &Report) -> Vec<&str> {
@@ -2494,6 +2916,39 @@ async fn actions_and_input_the_app_declines_under_a_fixture_are_unreachable_with
     }
 }
 
+/// The claims that need a live sequence to run, which a decline takes away.
+const RUNNING_INPUT_CLAIMS: [&str; 3] = [
+    "a pointer move to a layout node runs and names the frame after it",
+    "a click at the watchable pace answers no sooner than its floor",
+    SOURCE_KINDS_CLAIM,
+];
+
+#[tokio::test]
+async fn live_input_the_app_declines_is_unreachable_with_its_reason_and_its_refusals_still_hold() {
+    let report = report_of_app(Faithful::new(Flaw::None).declining_input()).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    for claim in RUNNING_INPUT_CLAIMS.into_iter().chain(["input reaches the app while a fixture stands"]) {
+        assert!(unreachable_because(&report, claim, PERSON), "{claim}: {report:?}");
+    }
+    for claim in [
+        "an unknown key",
+        "a frame the app no longer holds",
+        "a takeover the offer does not say the app holds is refused before any of the sequence runs",
+        "input while a past position is shown is refused as showing_past",
+    ] {
+        assert_eq!(verdict_of(&report, claim), Some(&Verdict::Holds), "{claim}: {report:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_configured_takeover_the_app_declines_first_is_unreachable_with_its_reason() {
+    for said in [HoldAnswer::Refuse, HoldAnswer::Allow] {
+        let app = Faithful::under(Condition::HoldsTakeover).declining_input();
+        let verdict = configured_takeover_of(app, TakeoverPolicy::default().otherwise(said), Some(said)).await;
+        assert!(matches!(&verdict, Verdict::Unreachable(why) if why.contains(PERSON)), "{verdict:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_fixture_the_app_ends_itself_is_told_with_its_reason_and_breaks_nothing() {
     let report = report_of_app(Faithful::under(Condition::EndsFixture)).await;
@@ -2503,6 +2958,43 @@ async fn a_fixture_the_app_ends_itself_is_told_with_its_reason_and_breaks_nothin
         assert_eq!(verdict_of(&report, claim), Some(&Verdict::Holds), "{claim}: {report:?}");
     }
     assert!(unreachable_because(&report, "replacing and releasing a fixture", ARRIVED), "{report:?}");
+}
+
+const MARK_REQUIRED: &str = "a present asking mark: false of an instance that is not a dev instance is refused as mark_required";
+const MARK_DRAWN: &str =
+    "while a fixture stands, a capture with the host's drawing shows the fixture mark, and the frame alone does not";
+const MARK_LEFT_OFF: &str =
+    "a dev instance honours a present asking mark: false: the fixture stands, and no capture shows the fixture mark";
+
+#[tokio::test]
+async fn a_faithful_app_marks_its_fixture_in_its_host_s_drawing_alone_and_refuses_mark_false() {
+    let report = report_of(Flaw::None).await;
+    assert_eq!(verdict_of(&report, MARK_REQUIRED), Some(&Verdict::Holds), "{report:?}");
+    assert_eq!(verdict_of(&report, MARK_DRAWN), Some(&Verdict::Holds), "{report:?}");
+    assert!(unreachable_because(&report, MARK_LEFT_OFF, "no dev instance"), "{report:?}");
+}
+
+#[tokio::test]
+async fn a_dev_instance_honours_mark_false_and_still_marks_a_fixture_that_asks_nothing() {
+    let report = report_of_app(Faithful::under(Condition::DevInstance)).await;
+    assert_eq!(broken_claims(&report), Vec::<&str>::new(), "{report:?}");
+    assert_eq!(verdict_of(&report, MARK_LEFT_OFF), Some(&Verdict::Holds), "{report:?}");
+    assert_eq!(verdict_of(&report, MARK_DRAWN), Some(&Verdict::Holds), "{report:?}");
+    assert!(unreachable_because(&report, MARK_REQUIRED, "dev instance"), "{report:?}");
+}
+
+#[tokio::test]
+async fn a_mark_in_the_frame_alone_or_no_mark_at_all_is_broken() {
+    for flaw in [Flaw::MarkInFrame, Flaw::Unmarked] {
+        let report = report_of(flaw).await;
+        assert_eq!(broken_claims(&report), vec![MARK_DRAWN], "{report:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_dev_instance_that_marks_a_fixture_asked_to_go_unmarked_is_broken() {
+    let report = report_of_app(Faithful { condition: Condition::DevInstance, ..Faithful::new(Flaw::MarksRegardless) }).await;
+    assert_eq!(broken_claims(&report), vec![MARK_LEFT_OFF], "{report:?}");
 }
 
 #[tokio::test]
@@ -2894,6 +3386,8 @@ impl UiApp for Offers {
             replay_policy: Vec::new(),
             sandboxes: Vec::new(),
             input: None,
+            dev_instance: false,
+            screencast: None,
         }
     }
 

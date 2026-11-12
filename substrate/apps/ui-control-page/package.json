@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/probe.test.ts tests/walk.test.ts tests/answer.test.ts"
+    "test": "node --test tests/probe.test.ts tests/walk.test.ts tests/answer.test.ts tests/clock.test.ts"
   },
   "dependencies": {
     "dom-accessibility-api": "0.7.1"

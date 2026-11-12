@@ -12,10 +12,12 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, Runtime, State, Webview};
 use tokio::sync::oneshot;
 
-use x0k_ui_protocol::input::{Event, Pace, Perform, Resolved, TickFault, WATCHABLE_PRESS_MS};
-use x0k_ui_protocol::presentation::{faded, watchable_way, InputPresentation, MARK_FOR};
+use x0k_ui_endpoint::takeover::TakeoverPolicy;
+use x0k_ui_protocol::input::{Event, Pace, Perform, Resolved, TickFault, TAKEOVER_ASK_MS, WATCHABLE_PRESS_MS};
+use x0k_ui_protocol::presentation::{faded, watchable_way, InputPresentation, Takeover, MARK_FOR};
 
 use crate::held::{held_capture, Held, HeldCapture, HoldingHost, HOLD_TRIES};
+use crate::provenance::{AskedInput, BeforeInput, DeliveredInput, InputObserver, InputTurn, Provenance, Teller};
 use crate::snapshot::Snapshot;
 
 /// The plugin's name, which its command and its permissions are named under.
@@ -28,8 +30,13 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often the drawing of drivers' input is pruned and painted while it fades.
 const FADE_STEP: Duration = Duration::from_millis(50);
 
+/// How long the person has to answer a takeover's ask.
+const TAKEOVER_ASK_WAIT: Duration = Duration::from_millis(TAKEOVER_ASK_MS);
+/// How often a waiting ask looks for the person's answer.
+const TAKEOVER_ASK_POLL: Duration = Duration::from_millis(50);
+
 /// What a page's host draws of drivers' input, shared with the task that fades it.
-type Shared = Arc<Mutex<InputPresentation>>;
+pub(crate) type Shared = Arc<Mutex<InputPresentation>>;
 /// The name each requester gives itself (`Perform::requester_name`), by requester.
 type Names = Arc<Mutex<HashMap<String, String>>>;
 
@@ -114,49 +121,131 @@ pub enum CoveredPainting {
     Off,
 }
 
-/// The plugin: the in-page library injected before the page's own scripts in
-/// the main frame of every page. Once the webview labelled `webview` has loaded
-/// its first page, the plugin serves it as the app's UI-control endpoint on the
-/// unix socket [`endpoint_socket_path`] names for `app`. A covered window
-/// keeps painting while a driver is connected.
+/// The plugin, as an app builds it: where its endpoint is served, which
+/// webview it serves, when a covered window keeps painting, and who is told
+/// of the input it delivers.
+pub struct UiPlugin {
+    endpoint: PathBuf,
+    webview: String,
+    covered: CoveredPainting,
+    observer: Option<InputObserver>,
+    before: Option<BeforeInput>,
+    takeover: TakeoverPolicy,
+    dev_instance: bool,
+}
+
+impl UiPlugin {
+    /// `app`'s plugin for the webview labelled `webview`, its endpoint on the
+    /// unix socket [`endpoint_socket_path`] names for `app`.
+    pub fn new(app: &str, webview: impl Into<String>) -> Self {
+        Self::at(endpoint_socket_path(app), webview)
+    }
+
+    /// The plugin serving its endpoint on the unix socket at `endpoint` and
+    /// nowhere else. It reads no environment and no profile to place it.
+    pub fn at(endpoint: impl Into<PathBuf>, webview: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            webview: webview.into(),
+            covered: CoveredPainting::default(),
+            observer: None,
+            before: None,
+            takeover: TakeoverPolicy::default(),
+            dev_instance: false,
+        }
+    }
+
+    /// Keep a covered window painting as `covered` says.
+    pub fn covered(self, covered: CoveredPainting) -> Self {
+        Self { covered, ..self }
+    }
+
+    /// Tell `observer` of every event the plugin delivers into a webview.
+    ///
+    /// It is called synchronously on the main thread, once per event, after
+    /// the platform event is made and before the view is handed it, so any
+    /// page handler the event triggers, and any request that handler sends
+    /// the host, runs after `observer` returned. A move the watchable pace
+    /// draws on its way is an event too. `last_delivered` already answers the
+    /// event when `observer` is called. `observer` must not block or panic:
+    /// the view waits for it.
+    pub fn on_input(self, observer: impl Fn(&DeliveredInput) + Send + Sync + 'static) -> Self {
+        Self { observer: Some(Arc::new(observer)), ..self }
+    }
+
+    /// Ask `before` of every sequence of input the endpoint has checked,
+    /// before any of it runs: `Run`, `Decline` it as `declined` with a
+    /// reason, or `Wait` for [`resume_input`] at most a while. It is asked on
+    /// the async runtime and must answer at once.
+    pub fn before_input(self, before: impl Fn(&AskedInput<'_>) -> InputTurn + Send + Sync + 'static) -> Self {
+        Self { before: Some(Arc::new(before)), ..self }
+    }
+
+    /// Answer a driver's takeover by `policy`, the host's configuration of
+    /// who allows one (`ui-control-channel` §10): ask the person, hold the
+    /// window without asking, or refuse. With none given, every takeover asks.
+    pub fn takeover(self, policy: TakeoverPolicy) -> Self {
+        Self { takeover: policy, ..self }
+    }
+
+    /// Say in the offer whether the app runs as a dev instance, which no
+    /// one's live work runs in (`ui-interfaces` §5). Only the app decides
+    /// it, when it starts; a dev instance honours a `present` asking
+    /// `mark: false`, and every other instance refuses it as `mark_required`.
+    pub fn dev_instance(self, dev_instance: bool) -> Self {
+        Self { dev_instance, ..self }
+    }
+
+    /// The plugin: the in-page library injected before the page's own
+    /// scripts in the main frame of every page. Once the webview has loaded
+    /// its first page, the plugin serves it as the app's UI-control endpoint.
+    pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
+        let Self { endpoint, webview: label, covered, observer, before, takeover, dev_instance } = self;
+        let served = AtomicBool::new(false);
+        let made = label.clone();
+        Builder::new(PLUGIN)
+            .js_init_script(PAGE_SCRIPT.to_string())
+            .invoke_handler(tauri::generate_handler![page_answer])
+            .setup(move |app, _| {
+                app.manage(Pending::default());
+                app.manage(Provenance::new(observer, before));
+                Ok(())
+            })
+            .on_webview_ready(move |webview| {
+                if covered == CoveredPainting::FromCreation && webview.label() == made {
+                    crate::painting::keep_painting(&webview, true);
+                }
+            })
+            .on_page_load(move |webview, payload| {
+                let first = payload.event() == PageLoadEvent::Finished && webview.label() == label && !served.swap(true, Ordering::SeqCst);
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                if first {
+                    let driven = covered == CoveredPainting::WhileDriven;
+                    tauri::async_runtime::spawn(crate::endpoint::serve(endpoint.clone(), webview.clone(), driven, takeover.clone(), dev_instance));
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                let _ = (first, &endpoint, covered, &takeover, dev_instance);
+            })
+            .build()
+    }
+}
+
+/// The plugin, served on the unix socket [`endpoint_socket_path`] names for
+/// `app`, keeping a covered window painting while a driver is connected:
+/// `UiPlugin::new(app, webview).build()`.
 pub fn ui_plugin<R: Runtime>(app: &str, webview: impl Into<String>) -> TauriPlugin<R> {
-    ui_plugin_with(app, webview, CoveredPainting::default())
+    UiPlugin::new(app, webview).build()
 }
 
 /// The plugin, keeping a covered window painting as `covered` says.
 pub fn ui_plugin_with<R: Runtime>(app: &str, webview: impl Into<String>, covered: CoveredPainting) -> TauriPlugin<R> {
-    ui_plugin_at(endpoint_socket_path(app), webview, covered)
+    UiPlugin::new(app, webview).covered(covered).build()
 }
 
 /// The plugin, serving its endpoint on the unix socket at `endpoint` and
-/// nowhere else, keeping a covered window painting as `covered` says. It reads
-/// no environment and no profile to place the socket.
+/// nowhere else, keeping a covered window painting as `covered` says.
 pub fn ui_plugin_at<R: Runtime>(endpoint: impl Into<PathBuf>, webview: impl Into<String>, covered: CoveredPainting) -> TauriPlugin<R> {
-    let (endpoint, label, served) = (endpoint.into(), webview.into(), AtomicBool::new(false));
-    let made = label.clone();
-    Builder::new(PLUGIN)
-        .js_init_script(PAGE_SCRIPT.to_string())
-        .invoke_handler(tauri::generate_handler![page_answer])
-        .setup(|app, _| {
-            app.manage(Pending::default());
-            Ok(())
-        })
-        .on_webview_ready(move |webview| {
-            if covered == CoveredPainting::FromCreation && webview.label() == made {
-                crate::painting::keep_painting(&webview, true);
-            }
-        })
-        .on_page_load(move |webview, payload| {
-            let first = payload.event() == PageLoadEvent::Finished && webview.label() == label && !served.swap(true, Ordering::SeqCst);
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            if first {
-                let driven = covered == CoveredPainting::WhileDriven;
-                tauri::async_runtime::spawn(crate::endpoint::serve(endpoint.clone(), webview.clone(), driven));
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            let _ = (first, &endpoint, covered);
-        })
-        .build()
+    UiPlugin::at(endpoint, webview).covered(covered).build()
 }
 
 /// Where the plugin serves `app`'s endpoint: `<app>.endpoint` in the
@@ -210,11 +299,19 @@ pub struct PageHost<R: Runtime> {
     /// The view's width in its own units, as the last capture measured it,
     /// as an `f64`'s bits; 0 until a capture.
     units: Arc<AtomicU64>,
+    /// Set once the person's input is held back while a takeover stands.
+    gate: tokio::sync::OnceCell<()>,
 }
 
 impl<R: Runtime> PageHost<R> {
     pub fn new(webview: Webview<R>) -> Self {
-        Self { webview, presentation: Shared::default(), names: Names::default(), fading: Arc::default(), units: Arc::default() }
+        let (presentation, names, fading, units) = (Shared::default(), Names::default(), Arc::default(), Arc::default());
+        Self { webview, presentation, names, fading, units, gate: tokio::sync::OnceCell::new() }
+    }
+
+    /// The webview whose page this is.
+    pub fn webview(&self) -> &Webview<R> {
+        &self.webview
     }
 
     /// Whether a capture of the page held now carries the drawing of drivers'
@@ -230,7 +327,7 @@ impl<R: Runtime> PageHost<R> {
     }
 
     /// `requester`'s sequence names it `given`, or names it nothing.
-    fn named(&self, requester: &str, given: Option<&str>) {
+    pub(crate) fn named(&self, requester: &str, given: Option<&str>) {
         let mut names = self.names.lock().unwrap_or_else(PoisonError::into_inner);
         match given {
             Some(given) => names.insert(requester.to_string(), given.to_string()),
@@ -261,7 +358,7 @@ impl<R: Runtime> PageHost<R> {
     /// At the watchable pace, before `event` lands: a move travels its watchable
     /// way from where its source last was, drawn and delivered at each point, and
     /// a press or a key waits `WATCHABLE_PRESS_MS`.
-    async fn travel(&self, requester: &str, event: &Event, last: &mut HashMap<String, (f64, f64)>) -> Result<(), PageError> {
+    async fn travel(&self, requester: &str, event: &Event, last: &mut HashMap<String, (f64, f64)>, teller: &Teller) -> Result<(), PageError> {
         match event {
             Event::Move { source, x, y, held } => {
                 let from = last.insert(source.clone(), (*x, *y)).unwrap_or((*x, *y));
@@ -269,7 +366,7 @@ impl<R: Runtime> PageHost<R> {
                 for (wx, wy) in way {
                     let step = Event::Move { source: source.clone(), x: wx, y: wy, held: *held };
                     self.draw(requester, &step);
-                    crate::input::deliver(&self.webview, vec![crate::input::synth(&step)]).await?;
+                    crate::input::deliver(&self.webview, vec![(crate::input::synth(&step), step.clone())], teller.clone()).await?;
                     tokio::time::sleep(each).await;
                 }
             }
@@ -277,6 +374,93 @@ impl<R: Runtime> PageHost<R> {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Mark the fixture `handle` over the page while it stands, or mark none.
+    pub fn mark_fixture(&self, handle: Option<&str>) {
+        self.presentation.lock().unwrap_or_else(PoisonError::into_inner).mark_fixture(handle);
+        self.repaint();
+    }
+
+    /// The fixture the plugin marks over the page now.
+    pub fn fixture_mark(&self) -> Option<String> {
+        self.presentation.lock().unwrap_or_else(PoisonError::into_inner).fixture_mark().map(str::to_string)
+    }
+
+    /// Hold the window's input for `requester` without asking, as the host's
+    /// configuration allows, and draw the hold. False while another takeover is
+    /// asked for or held, or when the person's input cannot be held back.
+    pub async fn hold_takeover(&self, requester: &str) -> bool {
+        if let Err(error) = self.gate().await {
+            tracing::warn!(%error, "ui_tauri.takeover.ungated");
+            return false;
+        }
+        let held = self.presentation.lock().unwrap_or_else(PoisonError::into_inner).hold_takeover(requester);
+        self.repaint();
+        held
+    }
+
+    /// Ask the person to grant `requester` a takeover, drawing the ask, and
+    /// wait up to `TAKEOVER_ASK_MS` for their answer: Allow grants it; Refuse,
+    /// the exit key or no answer in time refuses it, and the ask is withdrawn.
+    pub async fn ask_takeover(&self, requester: &str) -> bool {
+        if let Err(error) = self.gate().await {
+            tracing::warn!(%error, "ui_tauri.takeover.ungated");
+            return false;
+        }
+        if !self.presentation.lock().unwrap_or_else(PoisonError::into_inner).ask_takeover(requester) {
+            return false;
+        }
+        self.repaint();
+        let asked = Instant::now();
+        loop {
+            let standing = self.presentation.lock().unwrap_or_else(PoisonError::into_inner).takeover().clone();
+            match standing {
+                Takeover::Asked { .. } if asked.elapsed() < TAKEOVER_ASK_WAIT => tokio::time::sleep(TAKEOVER_ASK_POLL).await,
+                Takeover::Held { requester: by } if by == requester => return true,
+                _ => break,
+            }
+        }
+        self.end_takeover(requester);
+        false
+    }
+
+    /// Whether `requester`'s takeover holds the window now: not once the
+    /// person's exit key has ended it.
+    pub fn holds_takeover(&self, requester: &str) -> bool {
+        let shown = self.presentation.lock().unwrap_or_else(PoisonError::into_inner);
+        matches!(shown.takeover(), Takeover::Held { requester: by } if by == requester)
+    }
+
+    /// `requester`'s takeover ends, or its ask is withdrawn; another
+    /// requester's stays.
+    pub fn end_takeover(&self, requester: &str) {
+        self.presentation.lock().unwrap_or_else(PoisonError::into_inner).end_takeover(requester);
+        self.repaint();
+    }
+
+    /// Hold the person's input back from the window while a takeover is asked
+    /// for or held, from the first takeover on, and know the view's width the
+    /// ask's card is placed in.
+    async fn gate(&self) -> Result<(), PageError> {
+        if self.units.load(Ordering::SeqCst) == 0 {
+            if let Some(width) = crate::takeover::view_width(&self.webview).await {
+                self.units.store(width.to_bits(), Ordering::SeqCst);
+            }
+        }
+        self.gate.get_or_try_init(|| crate::takeover::hold_back(&self.webview, self.person())).await.map(|_| ())
+    }
+
+    /// The person's input at this window, as a takeover meets it.
+    fn person(&self) -> Person {
+        let (webview, presentation, names, units) = (self.webview.clone(), self.presentation.clone(), self.names.clone(), self.units.clone());
+        let repaint = Arc::new(move || paint_drawn(&webview, &presentation, &names, &units));
+        Person { presentation: self.presentation.clone(), units: self.units.clone(), repaint }
+    }
+
+    /// Paint the drawing as it stands.
+    fn repaint(&self) {
+        paint_drawn(&self.webview, &self.presentation, &self.names, &self.units);
     }
 
     /// Run `body` in the page, waiting the default time for its answer.
@@ -344,20 +528,22 @@ impl<R: Runtime> PageHost<R> {
         let ticks = crate::input::appkit_ticks(perform, resolved, scale)?;
         let shown = x0k_ui_protocol::input::ticks(perform, resolved, scale)?;
         self.named(requester, perform.requester_name.as_deref());
+        let teller = Teller::new(&self.webview, requester, perform.requester_name.as_deref());
         let watchable = perform.presented() && perform.pace == Pace::Watchable;
         let mut last = HashMap::new();
         for (tick, events) in ticks.into_iter().zip(&shown) {
+            let paired: Vec<_> = tick.events.into_iter().zip(events.events.iter().cloned()).collect();
             if watchable {
-                for (synth, event) in tick.events.into_iter().zip(&events.events) {
-                    self.travel(requester, event, &mut last).await?;
-                    self.draw(requester, event);
-                    crate::input::deliver(&self.webview, vec![synth]).await?;
+                for (synth, event) in paired {
+                    self.travel(requester, &event, &mut last, &teller).await?;
+                    self.draw(requester, &event);
+                    crate::input::deliver(&self.webview, vec![(synth, event)], teller.clone()).await?;
                 }
             } else {
                 if perform.presented() {
-                    events.events.iter().for_each(|event| self.draw(requester, event));
+                    paired.iter().for_each(|(_, event)| self.draw(requester, event));
                 }
-                crate::input::deliver(&self.webview, tick.events).await?;
+                crate::input::deliver(&self.webview, paired, teller.clone()).await?;
             }
             if tick.pause_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(tick.pause_ms.into())).await;
@@ -460,9 +646,148 @@ fn paint_drawn<R: Runtime>(webview: &Webview<R>, presentation: &Shared, names: &
             "pointers": pointers.iter().map(|p| serde_json::json!({ "requester": p.requester, "name": names.get(&p.requester), "at": p.at, "pressed": p.pressed, "hue": shown.hue(&p.requester) })).collect::<Vec<_>>(),
             "clicks": clicks.iter().map(|c| serde_json::json!({ "at": c.at, "gone": faded(c.since, now, MARK_FOR), "hue": shown.hue(&c.requester) })).collect::<Vec<_>>(),
             "keys": keys.map(|k| serde_json::json!({ "requester": k.requester, "text": k.text, "gone": faded(k.since, now, MARK_FOR), "hue": shown.hue(&k.requester) })),
+            "takeover": drawn_takeover(&mut shown, &names, f64::from_bits(units.load(Ordering::SeqCst))),
+            "fixture": shown.fixture_mark(),
         })
     };
     if let Err(error) = webview.eval(format!("globalThis.{PAGE_GLOBAL}?.drawn.paint({drawing});")) {
         tracing::debug!(%error, "ui_tauri.drawn.unpainted");
+    }
+}
+
+/// The person's input at a window, as a takeover meets it: what the host
+/// draws, the view's width, and how to paint it again.
+#[derive(Clone)]
+pub(crate) struct Person {
+    pub(crate) presentation: Shared,
+    pub(crate) units: Arc<AtomicU64>,
+    pub(crate) repaint: Arc<dyn Fn() + Send + Sync>,
+}
+
+/// One event of the person's, as a takeover reads it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum PersonInput<'a> {
+    /// A key, by the protocol's name for it when it is the exit key.
+    Key { key: &'a str, down: bool },
+    /// A pointer's press, at its position in the view's units.
+    Press { at: (f64, f64) },
+    /// Any other pointer event.
+    Pointer,
+}
+
+impl Person {
+    /// Whether `input` stops before the page: while a takeover is asked for
+    /// or held, it does, after answering the ask or ending the hold when
+    /// it is the person's answer.
+    pub(crate) fn meets(&self, input: PersonInput<'_>) -> bool {
+        let mut shown = self.presentation.lock().unwrap_or_else(PoisonError::into_inner);
+        let asked = match shown.takeover() {
+            Takeover::Free => return false,
+            Takeover::Asked { .. } => true,
+            Takeover::Held { .. } => false,
+        };
+        let changes = shown.changes;
+        match input {
+            PersonInput::Key { key, down } => {
+                shown.person_key(key, down);
+            }
+            PersonInput::Press { at } if asked => {
+                let (_, [allow, refuse]) = ask_card(f64::from_bits(self.units.load(Ordering::SeqCst)));
+                if inside(allow, at) {
+                    shown.answer_takeover(true);
+                } else if inside(refuse, at) {
+                    shown.answer_takeover(false);
+                }
+            }
+            PersonInput::Press { .. } | PersonInput::Pointer => {}
+        }
+        let changed = shown.changes != changes;
+        drop(shown);
+        if changed {
+            (self.repaint)();
+        }
+        true
+    }
+}
+
+/// A rectangle in the view's units: its left, top, width and height.
+pub(crate) type Rect = [f64; 4];
+
+/// Where the ask's card lies in a view `width` units wide, and its two
+/// buttons in it, Allow and Refuse.
+pub(crate) fn ask_card(width: f64) -> (Rect, [Rect; 2]) {
+    let across = (width - 16.0).clamp(240.0, 360.0);
+    let (left, top) = ((width - across) / 2.0, 40.0);
+    ([left, top, across, 112.0], [[left + 18.0, top + 68.0, 96.0, 30.0], [left + 126.0, top + 68.0, 132.0, 30.0]])
+}
+
+/// Whether `at` lies in `rect`.
+fn inside([left, top, width, height]: Rect, (x, y): (f64, f64)) -> bool {
+    (left..left + width).contains(&x) && (top..top + height).contains(&y)
+}
+
+/// The takeover as one paint draws it: the ask, with its card and buttons,
+/// or the hold, each naming its requester and the name its sequence gives;
+/// null while none stands.
+fn drawn_takeover(shown: &mut InputPresentation, names: &HashMap<String, String>, width: f64) -> serde_json::Value {
+    let (asked, requester) = match shown.takeover().clone() {
+        Takeover::Free => return serde_json::Value::Null,
+        Takeover::Asked { requester } => (true, requester),
+        Takeover::Held { requester } => (false, requester),
+    };
+    let (card, [allow, refuse]) = ask_card(width);
+    let mut drawn = serde_json::json!({ "asked": asked, "requester": requester, "name": names.get(&requester), "hue": shown.hue(&requester) });
+    if asked {
+        (drawn["card"], drawn["allow"], drawn["refuse"]) = (card.into(), allow.into(), refuse.into());
+    }
+    drawn
+}
+
+#[cfg(test)]
+mod takeover_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    fn person() -> (Person, Arc<AtomicUsize>) {
+        let painted = Arc::new(AtomicUsize::new(0));
+        let paints = painted.clone();
+        let repaint = Arc::new(move || {
+            paints.fetch_add(1, Ordering::SeqCst);
+        });
+        (Person { presentation: Shared::default(), units: Arc::new(AtomicU64::new(400f64.to_bits())), repaint }, painted)
+    }
+
+    fn standing(person: &Person) -> Takeover {
+        person.presentation.lock().unwrap().takeover().clone()
+    }
+
+    #[test]
+    fn the_person_s_input_stops_only_while_a_takeover_stands_and_the_exit_key_ends_a_hold() {
+        let (person, painted) = person();
+        assert!(!person.meets(PersonInput::Key { key: "a", down: true }), "a key stopped with no takeover");
+        assert!(!person.meets(PersonInput::Pointer), "a pointer event stopped with no takeover");
+        assert!(person.presentation.lock().unwrap().hold_takeover("agent"));
+        assert!(person.meets(PersonInput::Pointer));
+        assert!(person.meets(PersonInput::Press { at: (60.0, 120.0) }));
+        assert!(person.meets(PersonInput::Key { key: "a", down: true }));
+        assert_eq!(painted.load(Ordering::SeqCst), 0, "input that changed nothing painted");
+        assert!(person.meets(PersonInput::Key { key: "Escape", down: true }));
+        assert_eq!(standing(&person), Takeover::Free, "the exit key did not end the hold");
+        assert_eq!(painted.load(Ordering::SeqCst), 1, "the hold's end was not painted");
+    }
+
+    #[test]
+    fn the_person_answers_an_ask_on_its_buttons_and_nowhere_else() {
+        let (person, _) = person();
+        let (card, [allow, refuse]) = ask_card(400.0);
+        let centre = |[left, top, width, height]: Rect| (left + width / 2.0, top + height / 2.0);
+        person.presentation.lock().unwrap().ask_takeover("agent");
+        assert!(person.meets(PersonInput::Press { at: (card[0] + 4.0, card[1] + 4.0) }));
+        assert!(matches!(standing(&person), Takeover::Asked { .. }), "a press beside the buttons answered the ask");
+        assert!(person.meets(PersonInput::Press { at: centre(refuse) }));
+        assert_eq!(standing(&person), Takeover::Free, "Refuse did not refuse");
+        person.presentation.lock().unwrap().ask_takeover("agent");
+        assert!(person.meets(PersonInput::Press { at: centre(allow) }));
+        assert_eq!(standing(&person), Takeover::Held { requester: "agent".to_string() }, "Allow did not grant");
     }
 }
