@@ -34,7 +34,7 @@ and the operations they share still work.
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-endpoint"
-version = "0.3.0"
+version = "0.3.1"
 edition = { workspace = true }
 license = "MIT"
 description = "The UI-control endpoint over the operation wire: an app's calls, the checks made before the app hears them, and a driver's client."
@@ -58,7 +58,7 @@ x0k-datum = { version = "0.1.0" }
 x0k-operation-wire = { path = "../x0k-operation-wire", default-features = false , version = "0.1.0" }
 # The session the calls run on.
 x0k-operation-session = { path = "../x0k-operation-session", version = "0.2.0" }
-x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.3.0" }
+x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.3.1" }
 # The profile's own runtime dir, where an endpoint binds.
 x0k-runtime-dir = { path = "../x0k-runtime-dir", version = "0.1.0" }
 # The conformance suite reads the fixture mark's ink in a capture's PNG.

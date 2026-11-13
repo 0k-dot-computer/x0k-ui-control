@@ -7,11 +7,12 @@ use std::cell::Cell;
 use gtk::gdk::{self, EventType};
 use gtk::glib::Propagation;
 use gtk::prelude::*;
-use tauri::{Runtime, Webview};
+use tauri::{Manager, Runtime, Webview};
 use tokio::sync::oneshot;
 use x0k_ui_protocol::presentation::TAKEOVER_EXIT;
 
 use crate::page::{PageError, Person, PersonInput};
+use crate::provenance::Provenance;
 
 thread_local! {
     /// Whether the plugin is handing GTK one of its own events now.
@@ -39,14 +40,15 @@ pub(crate) fn delivering<T>(deliver: impl FnOnce() -> T) -> T {
 /// for the window's life, at the `event` signal of its toplevel, which a key
 /// reaches first, and of the webview widget, which a pointer's event does.
 pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) -> Result<(), PageError> {
+    let provenance = webview.try_state::<Provenance>().map(|state| state.inner().clone()).unwrap_or_default();
     let (done, connected) = oneshot::channel();
     webview.with_webview(move |platform| {
         let view = platform.inner().upcast::<gtk::Widget>();
         let Some(toplevel) = view.toplevel() else { return };
         for widget in [&toplevel, &view] {
-            let (view, person) = (view.downgrade(), person.clone());
+            let (view, person, provenance) = (view.downgrade(), person.clone(), provenance.clone());
             widget.connect_event(move |_, event| match view.upgrade() {
-                Some(view) if meets(&view, &person, event) => Propagation::Stop,
+                Some(view) if meets(&view, &person, &provenance, event) => Propagation::Stop,
                 _ => Propagation::Proceed,
             });
         }
@@ -56,13 +58,14 @@ pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) 
 }
 
 /// Whether the person's `event` stops before the page: never one the plugin
-/// is delivering, and only a pointer's or a key's.
-fn meets(view: &gtk::Widget, person: &Person, event: &gdk::Event) -> bool {
+/// is delivering or a key WebKitGTK hands back, and only a pointer's or a key's.
+fn meets(view: &gtk::Widget, person: &Person, provenance: &Provenance, event: &gdk::Event) -> bool {
     if DELIVERING.with(Cell::get) {
         return false;
     }
     use EventType as E;
     let input = match event.event_type() {
+        E::KeyPress | E::KeyRelease if provenance.made(f64::from(event.time())) => return false,
         E::KeyPress | E::KeyRelease => {
             let exit = event.keyval() == Some(*gdk::keys::constants::Escape);
             PersonInput::Key { key: if exit { TAKEOVER_EXIT } else { "" }, down: event.event_type() == E::KeyPress }

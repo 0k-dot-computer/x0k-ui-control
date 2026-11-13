@@ -60,7 +60,7 @@ crate-type = ["cdylib", "rlib"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.3.0" }
+x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.3.1" }
 ```
 
 A request names its function in `fn`, and each is one of the page module's:

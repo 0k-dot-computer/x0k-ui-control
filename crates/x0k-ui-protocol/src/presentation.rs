@@ -274,9 +274,9 @@ impl InputPresentation {
 /// The colour of the fixture mark's band, as `[r, g, b]`, in every host.
 pub const FIXTURE_INK: [u8; 3] = [245, 158, 11];
 /// How wide the fixture mark's band is, in host units.
-pub const FIXTURE_BAND: f64 = 6.0;
-/// What the fixture mark says at the window's foot.
-pub const FIXTURE_NOTICE: &str = "A fixture, not the live state";
+pub const FIXTURE_BAND: f64 = 2.0;
+/// What the fixture mark says at the window's foot, in its right corner.
+pub const FIXTURE_NOTICE: &str = "Fixture, not the live state";
 
 impl InputPresentation {
     /// Mark the fixture `handle` over the window while it stands, or mark none.

@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/protocol.md",
-  "source_hash": "ad62638b55489098",
+  "source_hash": "9fd1b8da85741202",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-protocol/Cargo.toml",
-          "hash": "2ec1b1cf8b8c9fa0"
+          "hash": "35b08a5b267d7993"
         },
         {
           "path": "crates/x0k-ui-protocol/src/lib.rs",
@@ -49,7 +49,7 @@
         },
         {
           "path": "crates/x0k-ui-protocol/src/presentation.rs",
-          "hash": "98c84ddf2ed045d3"
+          "hash": "577c078e4b23eb67"
         },
         {
           "path": "crates/x0k-ui-protocol/src/page.rs",

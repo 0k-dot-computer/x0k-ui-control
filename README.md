@@ -28,8 +28,9 @@ runs. Anything else an action would do to the world is simulated, or sent to a
 sandbox the app names, and the answer says which. `release` shows the live state
 again, and so does the end of the driver's session. The offer says how deeply the
 app can be looked into, and what its actions do while a state like this stands.
-While a given state stands, the host marks its window with a band at the foot, so
-a person at the window can tell it is not the live one.
+While a given state stands, the host marks its window with a thin band round its
+edge and a small label in its corner, so a person at the window can tell it is
+not the live one.
 
 A screenshot shows where a motion ended; a screencast shows the motion. `cast`
 plays a run of timed steps, the same invoke, perform, present and release, at a

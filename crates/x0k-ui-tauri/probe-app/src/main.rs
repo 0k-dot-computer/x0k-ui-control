@@ -550,7 +550,41 @@ async fn person_input(webview: &Webview<Wry>, request: &Value) -> Result<Value, 
     Ok(json!({ "time": time }))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// A person's key, made as the windowing system's events arrive: its down
+/// and up in the webview's window, handed to `NSApplication`'s `sendEvent:`,
+/// so the app's local monitors meet it as a person's, with a time no event
+/// of the plugin's carries. Escape is its key code, 53; any other key is its
+/// characters alone. A click is not made.
+#[cfg(target_os = "macos")]
+async fn person_input(webview: &Webview<Wry>, request: &Value) -> Result<Value, PageError> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSView};
+    use objc2_foundation::{NSPoint, NSProcessInfo, NSString};
+    let Some(key) = request["key"].as_str().map(str::to_string) else { return Err(PageError::InputDropped) };
+    let (done, sent) = oneshot::channel();
+    webview.with_webview(move |platform| {
+        // SAFETY: on macOS `inner()` is the webview's WKWebView, an NSView,
+        // alive while this closure runs on the main thread.
+        let view = unsafe { &*platform.inner().cast::<NSView>() };
+        let (Some(mtm), Some(window)) = (MainThreadMarker::new(), view.window()) else { return };
+        let (code, characters) = if key == "Escape" { (53, NSString::from_str("\u{1B}")) } else { (0, NSString::from_str(&key)) };
+        let time = NSProcessInfo::processInfo().systemUptime();
+        for kind in [NSEventType::KeyDown, NSEventType::KeyUp] {
+            let made = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                kind, NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), time, window.windowNumber(), None, &characters, &characters, false, code,
+            );
+            if let Some(made) = made {
+                NSApplication::sharedApplication(mtm).sendEvent(&made);
+            }
+        }
+        let _ = done.send(time);
+    })?;
+    let time = sent.await.map_err(|_| PageError::NoWindow)?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    Ok(json!({ "time": time }))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 async fn person_input(_webview: &Webview<Wry>, _request: &Value) -> Result<Value, PageError> {
     Err(PageError::NoWindow)
 }

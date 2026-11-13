@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/endpoint.md",
-  "source_hash": "d366acff24600289",
+  "source_hash": "a25cfe7e1fc9b837",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,7 +9,7 @@
       "outputs": [
         {
           "path": "crates/x0k-ui-endpoint/Cargo.toml",
-          "hash": "96ea6e9da82f84bf"
+          "hash": "7500517ffe9c54a9"
         },
         {
           "path": "crates/x0k-ui-endpoint/src/lib.rs",

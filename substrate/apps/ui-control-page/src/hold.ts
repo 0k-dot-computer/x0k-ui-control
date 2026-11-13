@@ -54,10 +54,10 @@ export interface HoldOptions {
 
 /** How many rendering updates the page is held through before it is read. */
 export const SETTLE_UPDATES = 2;
-/** How long a hold may stand before the page lets itself go. */
+/** How long a hold may stand after it answered before the page lets itself go. */
 export const HOLD_LAPSE_MS = 1000;
-/** How long any wait on a rendering update may last before the page answers
- * that it cannot paint. */
+/** How long any wait on a rendering update may go without hearing one before
+ * the page answers that it cannot paint. */
 export const FRAME_WAIT_MS = 1000;
 /** How long input may keep arriving before the page counts as settled. */
 export const SETTLE_MS = 1000;
@@ -168,35 +168,52 @@ export function installHold(win: Window = window): Hold {
   });
   const HIDDEN = 'the page is hidden: document.visibilityState is hidden, as for a minimised, unmapped or covered window';
   const hiddenNow = () => (doc.visibilityState === 'hidden' ? HIDDEN : undefined);
-  // When a wait last ran out with no rendering update, until the next one comes.
+  // Since when no rendering update had come, when a wait last ran out, until
+  // the next one comes.
   let stalledAt: number | undefined;
-  const stalled = () => {
-    stalledAt ??= native.now() - FRAME_WAIT_MS;
+  const stalled = (since: number) => {
+    stalledAt ??= since;
     nativeRaf(() => { stalledAt = undefined; });
   };
   const unpainted = (): string | undefined => hiddenNow()
     ?? (stalledAt === undefined ? undefined : `no rendering update has come for ${Math.round(native.now() - stalledAt)} ms`);
   /** `wait`, or why the page cannot paint: it is or becomes hidden, or
-   * `FRAME_WAIT_MS` pass with `wait` unanswered. */
+   * `FRAME_WAIT_MS` pass with `wait` unanswered and no rendering update heard. */
   const whilePainting = (wait: Promise<unknown>): Promise<string | undefined> => new Promise((done) => {
     const now = unpainted();
     if (now) return done(now);
     let finished = false;
+    // The last rendering update heard while the wait runs, or its start.
+    let heard = native.now();
+    let hearing = nativeRaf(function hear() { heard = native.now(); hearing = nativeRaf(hear); });
     const finish = (why?: string) => {
       if (finished) return;
       finished = true;
       native.clearTimeout(timer);
+      nativeCancel(hearing);
       doc.removeEventListener('visibilitychange', onVisibility);
       done(why);
     };
     const onVisibility = () => { const why = hiddenNow(); if (why) finish(why); };
     doc.addEventListener('visibilitychange', onVisibility);
-    const timer = native.setTimeout(() => { stalled(); finish(unpainted()); }, FRAME_WAIT_MS);
+    // The bound runs from the last rendering update heard: a page whose
+    // updates come, however late, is painting.
+    const bound = () => {
+      const quiet = native.now() - heard;
+      if (quiet < FRAME_WAIT_MS) {
+        timer = native.setTimeout(bound, FRAME_WAIT_MS - quiet);
+        return;
+      }
+      stalled(heard);
+      finish(unpainted());
+    };
+    let timer = native.setTimeout(bound, FRAME_WAIT_MS);
     wait.then(() => finish(), () => finish());
   });
-  const rendered = () => (clock.stepping()
-    ? Promise.resolve(unpainted())
-    : whilePainting(new Promise<void>((done) => win.requestAnimationFrame(() => done()))));
+  // The next rendering update: the page's own, or while the clock steps, the
+  // engine's, which goes on while the page's frames wait for the host.
+  const nextUpdate = (done: () => void) => (clock.stepping() ? nativeRaf(() => done()) : win.requestAnimationFrame(() => done()));
+  const rendered = () => whilePainting(new Promise<void>(nextUpdate));
   const SETTLE_EVENTS = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
   const settled = async (): Promise<string | undefined> => {
     let quiet = 0;
@@ -243,9 +260,6 @@ export function installHold(win: Window = window): Hold {
     const start = native.now();
     if (!held) {
       held = true;
-      // A host that never verifies does not leave the page held: the page
-      // lets itself go, and the epoch moves so the host's check fails.
-      lapse = native.setTimeout(() => { release(); bump(); }, HOLD_LAPSE_MS);
       paused = doc.getAnimations().filter((a) => a.playState === 'running').map((animation) => ({ animation, startTime: animation.startTime }));
       for (const { animation } of paused) animation.pause();
       // A pause takes hold, on the compositor too, when its animation is ready.
@@ -259,6 +273,11 @@ export function installHold(win: Window = window): Hold {
     unheld = undefined;
     const epoch = epochNow();
     const answered: Held<T> = { epoch, read: read(), holdMs: native.now() - start };
+    // A host that never verifies does not leave the page held: from the
+    // answer, the page lets itself go, and the epoch moves so the host's check
+    // fails. However long the hold took to settle, its host has the whole lapse.
+    native.clearTimeout(lapse);
+    lapse = native.setTimeout(() => { release(); bump(); }, HOLD_LAPSE_MS);
     return why ? { ...answered, unpainted: why } : answered;
   };
   const verify = (): number => {

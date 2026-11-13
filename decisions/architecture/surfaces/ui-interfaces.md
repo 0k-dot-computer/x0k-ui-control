@@ -608,19 +608,19 @@ the observation `ui-control-channel` §8 decides (§3 above).
 
 - [ui-control-channel](ui-control-channel.md) — the endpoint protocol,
   `ui/observe`, `ui/act` and `ui/input`, which this decision adds to.
-- [core-and-edges](core-and-edges.md) — §2 names the UI interfaces and the
+- core-and-edges — §2 names the UI interfaces and the
   edges by reach; its §5, installation as partial application, is where
   this decision's §8 refusal happens.
-- [graded-introspection](../substrate/graded-introspection.md) — §1's grades
+- graded-introspection — §1's grades
   and §2's degradation for the offer; §9's purposes, dispositions and floors
   for `ui/history`, state fixtures and the replay policy.
-- [operation-surface](../platform/operation-surface.md) — §1's frames and
+- operation-surface — §1's frames and
   `on_behalf_of`; §12's side-effect classes.
-- [value-shapes](value-shapes.md) — the shape a state fixture is checked
+- [value-shapes](https://github.com/0k-dot-computer/x0k-datum/blob/main/decisions/architecture/surfaces/value-shapes.md) — the shape a state fixture is checked
   against.
-- [fleet-streams](../substrate/fleet-streams.md) — the carrier to an app on
+- fleet-streams — the carrier to an app on
   another node.
-- [service-authorization](../substrate/service-authorization.md) — the grants
+- service-authorization — the grants
   whose interfaces a call is checked against.
 - `ui-driver` — the design this supports; `inspect-and-rewind` faces a person
   with the same going back.

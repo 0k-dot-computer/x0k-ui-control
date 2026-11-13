@@ -4,7 +4,7 @@ import { createServer, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { ownedTempDir, spawnOwned } from '../../../../../tools/owned-process.mjs';
-import { bgraImage, type Engine, scratchEnv } from './engine.ts';
+import { bgraImage, type Engine, readsVisibility, scratchEnv } from './engine.ts';
 
 /** The Python with GTK 3 and WebKitGTK 4.1 bindings the dev shell names. */
 const PYTHON = process.env.X0K_WEBKITGTK_PYTHON ?? 'x0k-webkitgtk-python';
@@ -67,16 +67,23 @@ export async function webkitgtk(page: string, script: string, { width, height, c
       if (reply.error) throw new Error(reply.error);
       return reply;
     };
+    const evaluate = async (body: string): Promise<string> => (await call({ op: 'eval', body })).value;
     return {
       name: `webkitgtk ${compositing ? 'composited' : 'not composited'}${dpi ? ` at ${dpi} dpi` : ''}`,
       version: `WebKitGTK ${version}`,
-      evaluate: async (body) => (await call({ op: 'eval', body })).value,
+      evaluate,
       capture: async () => {
         const r = await call({ op: 'snap' });
         return bgraImage(r.width, r.height, r.stride, Buffer.from(r.bgra, 'base64'), Buffer.from(r.png, 'base64'));
       },
-      hide: async () => { await call({ op: 'hide' }); },
-      show: async () => { await call({ op: 'show' }); },
+      hide: async () => {
+        await call({ op: 'hide' });
+        await readsVisibility(evaluate, 'hidden');
+      },
+      show: async () => {
+        await call({ op: 'show' });
+        await readsVisibility(evaluate, 'visible');
+      },
       close: async () => { link.destroy(); await stopAll(); },
     };
   } catch (e) {

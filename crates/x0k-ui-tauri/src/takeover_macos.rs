@@ -7,18 +7,21 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
 use objc2_web_kit::WKWebView;
-use tauri::{Runtime, Webview};
+use tauri::{Manager, Runtime, Webview};
 use tokio::sync::oneshot;
 use x0k_ui_protocol::presentation::TAKEOVER_EXIT;
 
 use crate::page::{PageError, Person, PersonInput};
+use crate::provenance::Provenance;
 
 /// Escape's key code, the same on every layout.
 const ESCAPE: u16 = 53;
 
 /// Hold the person's input back from `webview`'s window by `person`'s rule,
-/// for the app's life, at a local event monitor.
+/// for the app's life, at a local event monitor, which passes on every event
+/// the plugin made.
 pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) -> Result<(), PageError> {
+    let provenance = webview.try_state::<Provenance>().map(|state| state.inner().clone()).unwrap_or_default();
     let (done, installed) = oneshot::channel();
     webview.with_webview(move |platform| {
         // SAFETY: on macOS `inner()` is the webview's WKWebView, alive while
@@ -27,7 +30,9 @@ pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) 
         let monitor = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             // SAFETY: AppKit hands the monitor an event, valid for the call.
             let seen = unsafe { event.as_ref() };
-            if meets(&view, &person, seen) {
+            // A key down the page did not handle comes back here from
+            // WebKit as the very event the plugin made: never the person's.
+            if !provenance.made(seen.timestamp()) && meets(&view, &person, seen) {
                 std::ptr::null_mut()
             } else {
                 event.as_ptr()

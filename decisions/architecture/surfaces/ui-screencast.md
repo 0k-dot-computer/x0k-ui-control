@@ -752,15 +752,15 @@ for it is stated in them.
   `discard`; §4's fixtures, which a run presents, and the fixture mark; §5's
   offer, with `screencast` and the dev instance; §7's edges and fallback;
   §8's refusal at installation.
-- [core-and-edges](core-and-edges.md) — §2's list of UI interfaces, which
+- core-and-edges — §2's list of UI interfaces, which
   names `ui/screencast`.
-- [graded-introspection](../substrate/graded-introspection.md) — §1's grades,
+- graded-introspection — §1's grades,
   whose names this decision's terms avoid; §9's `vary`, under which a run's
   fixtures play.
-- [operation-surface](../platform/operation-surface.md) — §12's side-effect
+- operation-surface — §12's side-effect
   classes for `cast`, `frames` and `discard`.
-- [storage-inventory](../substrate/storage-inventory.md) and
-  [content-fetch-plane](../sync/content-fetch-plane.md) — the retention class
+- storage-inventory and
+  content-fetch-plane — the retention class
   of a screencast's directory, and the blob it becomes when kept.
 - `ui-driver` — the design this supports.
 

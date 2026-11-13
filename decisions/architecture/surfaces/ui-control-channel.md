@@ -617,29 +617,29 @@ asked about is acceptable only while the person can see it and end it.
 
 ## Related Decisions
 
-- [fleet-streams](fleet-streams.md) — supplies the named-service
+- fleet-streams — supplies the named-service
   surface, authorization at accept, and cross-device reach; the
   ui-control service is one entry in its registry.
-- [service-authorization](service-authorization.md) — the capability
+- service-authorization — the capability
   hierarchy and caller shapes the stream accept consumes, via
   `fleet-streams`.
-- [state-representation](state-representation.md) — the latest-value
+- state-representation — the latest-value
   fact idiom an app's registration is expressed in; §2 adopts those
   semantics and adds a process-scoped lifetime requirement on whichever
   plane carries them.
-- [query-subscriptions](query-subscriptions.md) — the maintained-view
+- query-subscriptions — the maintained-view
   semantics under which drivers observe registrations without polling.
-- [observability-timeline](observability-timeline.md) — the canonical
+- observability-timeline — the canonical
   home of control history.
-- [applications-are-tenants](applications-are-tenants.md) — the
+- applications-are-tenants — the
   tenancy frame in which an app states its offer to the substrate
   rather than residing in it.
-- [operation-surface](../platform/operation-surface.md) — §1's canonical CBOR frames
+- operation-surface — §1's canonical CBOR frames
   and carriers, which the endpoint protocol (§7) adopts.
-- [core-and-edges](core-and-edges.md) — §2 names the UI interfaces
+- core-and-edges — §2 names the UI interfaces
   and the edges by reach; §7 gives the ui-control edge its wire, and §8
   gives `ui/observe` its operations.
-- [graded-introspection](../substrate/graded-introspection.md) — §9's
+- graded-introspection — §9's
   `inspect`, which performs nothing, is why observing needs no replay
   policy.
 - [ui-interfaces](ui-interfaces.md) — `ui/history`, state fixtures, the

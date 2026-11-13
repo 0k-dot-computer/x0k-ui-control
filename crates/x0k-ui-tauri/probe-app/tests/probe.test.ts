@@ -743,6 +743,46 @@ if (!MAC) describe('a Tauri app whose host asks the person for a takeover, over 
   });
 });
 
+describe('a Tauri app whose host allows a takeover, against the driver\'s own Escape', () => {
+  let t0: Awaited<ReturnType<typeof takeoverApp>>;
+  before(async () => { t0 = await takeoverApp({ default: 'allow' }); });
+  after(async () => { await t0?.app.close(); });
+  /** Whether a capture shows the hold's band at the page's left edge. */
+  const band = async () => {
+    const capture = await t0.drawn(false);
+    return inkAt(capture, 2 * t0.captureScale, 150 * t0.captureScale);
+  };
+  /** A takeover whose sequence presses and releases Escape, then holds for `ms`. */
+  const escaping = (ms: number) => ({
+    takeover: true,
+    sources: [{ id: 'keys', kind: 'key', steps: [{ do: 'key_down', key: 'Escape' }, { do: 'key_up', key: 'Escape' }, { do: 'pause', ms }] }],
+  });
+
+  test('a driver\'s own Escape leaves the takeover its sequence holds standing', async (t) => {
+    await t0.app.call({ op: 'told' });
+    const { detached } = await t0.driven('perform', escaping(1500), true);
+    await sleep(600);
+    const held = await band();
+    const joined = await t0.app.call({ op: 'join', detached });
+    const { told: events, hooks } = await t0.app.call({ op: 'told' });
+    const times = new Set(events.map((e: any) => e.time));
+    const ours = hooks.filter((h: any) => times.has(h.time)).map((h: any) => `${h.hook} ${h.kind}`);
+    t.diagnostic(`answered in ${joined.ms?.toFixed(0)} ms; ${events.length} events told; the app's hooks saw ${JSON.stringify(ours)} of them`);
+    assert.ok(joined.answer?.done && joined.ms >= 1500, JSON.stringify(joined));
+    assert.ok(held, 'the driver\'s own Escape ended the takeover its sequence holds');
+  });
+  test('the person\'s Escape ends the hold at once', async () => {
+    const { detached } = await t0.driven('perform', holding(2500), true);
+    await sleep(400);
+    assert.ok(await band(), 'no hold to end');
+    await t0.app.call({ op: 'person', key: 'Escape' });
+    const ended = !(await band());
+    const joined = await t0.app.call({ op: 'join', detached });
+    assert.ok(joined.answer?.done && joined.ms >= 2500, JSON.stringify(joined));
+    assert.ok(ended, 'the hold stood after the person\'s Escape');
+  });
+});
+
 /** What makes the clock page take state fixtures: `going` starts its stage,
  * as `go()` does, the first time a fixture sets it, and `ink` paints the ink
  * patch blue. */
@@ -757,6 +797,14 @@ const STAGE = `const live = { going: 0, ink: 0 };
     ink.style.background = store.ink ? 'rgb(0, 0, 255)' : 'rgb(255, 255, 255)';
     if (store.going && !was) window.go();
   };
+  const keyed = document.createElement('div');
+  keyed.style.cssText = 'position: absolute; left: 270px; top: 0; width: 40px; height: 40px; background: rgb(255, 255, 255)';
+  document.body.append(keyed);
+  addEventListener('keydown', (e) => {
+    const from = new Event('now').timeStamp;
+    while (new Event('now').timeStamp - from < 10);
+    if (e.key === 'k') keyed.style.background = 'rgb(255, 0, 0)';
+  });
   const int = { shape: { kind: 'int' } };
   globalThis.__x0kUi.install({ app: 'clock page', state: {
     shape: { kind: 'struct', fields: { going: int, ink: int, date: int } },
@@ -768,6 +816,8 @@ const STAGE = `const live = { going: 0, ink: 0 };
   return 'ok';`;
 /** Where the ink patch is, in CSS pixels. */
 const INK = [350, 20];
+/** Where the key patch is, in CSS pixels. */
+const KEYED = [290, 20];
 /** How long the probe waits for a cast's answer. */
 const CAST_MS = 600_000;
 /** The date the dated casts name: 2026-11-12T00:00:00Z. */
@@ -783,13 +833,14 @@ async function clockApp(takeover: object) {
   const observed = await app.call({ op: 'endpoint', call: 'observe', argument: { parts: ['state'] } });
   const fingerprint = observed.answer.state.fingerprint;
   const present = (at_ms: number, state: object) => ({ at_ms, step: { do: 'present', present: { fixture: { kind: 'state', state: { date: 0, ...state } }, fingerprint } } });
+  const perform = (at_ms: number, sources: object[]) => ({ at_ms, step: { do: 'perform', perform: { sources } } });
   /** A cast of `run` at `fps` for `max_ms` from `date`, and the frames `indices` of it with their captures. */
   const cast = async (run: object[], fps: number, max_ms: number, indices: number[] = [], date?: number) => {
     const argument = { run, fps, max_ms, settle_ms: max_ms, clock: 'stepped', parts: ['capture', 'state'], presented: false, ...(date === undefined ? {} : { date }) };
     const frames = indices.length ? { indices, parts: ['capture', 'state'] } : undefined;
     return app.call({ op: 'endpoint', call: 'cast', argument, ...(frames ? { frames } : {}) }, CAST_MS);
   };
-  return { app, present, cast };
+  return { app, present, perform, cast };
 }
 
 /** The screencast a cast answered, or a failure naming what it answered instead. */
@@ -805,10 +856,17 @@ const inked = (frame: any) => {
   const [r, g, b] = capture.rgb(INK[0], INK[1]);
   return r === 0 && g === 0 && b === 255;
 };
+/** Whether a frame's capture shows the key patch red, or why it has no capture. */
+const keyed = (frame: any) => {
+  if (!frame.observation.capture) return JSON.stringify(frame.observation.refused);
+  const capture = pngImage(Buffer.from(frame.observation.capture.png));
+  const [r, g, b] = capture.rgb(KEYED[0], KEYED[1]);
+  return r === 255 && g === 0 && b === 0;
+};
 
 if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock over its endpoint', () => {
   let t0: Awaited<ReturnType<typeof clockApp>>;
-  let first: any, second: any, fast: any, dated: any, redated: any;
+  let first: any, second: any, fast: any, dated: any, redated: any, typed: any;
   const shownIn: Record<number, any> = {};
   before(async () => {
     t0 = await clockApp({ default: 'allow' });
@@ -823,6 +881,10 @@ if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock ove
       const inking = [t0.present(0, { going: 1, ink: 0 }), t0.present(100, { going: 1, ink: 1 })];
       shownIn[fps] = { at, answered: await t0.cast(inking, fps, 200, [at - 1, at]) };
     }
+    // Last, since the key patch stays red once the page heard the key.
+    const keys = [...'qwertyuiopasdfghjlzk'].flatMap((key) => [{ do: 'key_down', key }, { do: 'key_up', key }]);
+    const typing = [t0.present(0, { going: 1, ink: 0 }), t0.perform(100, [{ id: 'keys', kind: 'key', steps: keys }])];
+    typed = await t0.cast(typing, 25, 200, [2, 3]);
   });
   after(async () => { await t0?.app.close(); });
 
@@ -864,6 +926,12 @@ if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock ove
       assert.notEqual(cast.rows[at].shown.handle, cast.rows[at - 1].shown.handle, 'the frame names the fixture before');
     });
   }
+  test('a perform at 100 ms shows all its input in frame 3 at 25 fps, the first frame after it', () => {
+    const cast = screencast(typed);
+    const [before, showing] = typed.frames.frames.frames;
+    assert.deepEqual([before.index, showing.index], [2, 3], JSON.stringify(cast.ended));
+    assert.deepEqual([keyed(before), keyed(showing)], [false, true], `the key patch in frames 2 and 3; ended ${JSON.stringify(cast.ended)}`);
+  });
   test('after a cast the page\'s clock steps no more, and its animation frames run on the wall', async () => {
     assert.equal((await t0.app.call({ op: 'eval', body: STEPPING })).value, 'false');
     const ran = await t0.app.call({ op: 'eval', body: 'return String(await new Promise((done) => requestAnimationFrame(() => done(true))));' });
@@ -903,9 +971,9 @@ async function fixtureMarkApp(dev: boolean) {
   const driven = async (call: string, argument: object) => (await app.call({ op: 'endpoint', call, argument })).answer;
   const drawn = async (frame_only: boolean) => image((await app.call({ op: 'drawn', frame_only })).capture);
   /** Whether a capture shows the fixture mark's band at the page's left
-   * edge, halfway down: the band is the protocol's 6 units wide. */
+   * edge, halfway down, at the middle of the protocol's 2-unit band. */
   const band = (capture: Image) => {
-    const [r, g, b] = capture.rgb(Math.round(3 * snap.scale), Math.round(capture.height / 2));
+    const [r, g, b] = capture.rgb(Math.round(1 * snap.scale), Math.round(capture.height / 2));
     return r === FIXTURE_INK[0] && g === FIXTURE_INK[1] && b === FIXTURE_INK[2];
   };
   /** A present asking `mark`, over a session kept open `hold_ms` after it

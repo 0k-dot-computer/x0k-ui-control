@@ -1,6 +1,6 @@
 {
   "source": "implementation/ui-control/page-hold.md",
-  "source_hash": "9a14e0e04f2c9fc9",
+  "source_hash": "ce63b5efbc5d9eb3",
   "pipelines": [
     {
       "kind": "identity-tangle",
@@ -9,11 +9,11 @@
       "outputs": [
         {
           "path": "substrate/apps/ui-control-page/src/hold.ts",
-          "hash": "c190a046d30e4518"
+          "hash": "de1f28b10616e5ba"
         },
         {
           "path": "substrate/apps/ui-control-page/src/drawn-layer.ts",
-          "hash": "8e01a0e570470911"
+          "hash": "d186c0c08bdca949"
         },
         {
           "path": "substrate/apps/ui-control-page/src/held-capture.ts",
@@ -33,11 +33,11 @@
         },
         {
           "path": "substrate/apps/ui-control-page/tests/probe.test.ts",
-          "hash": "8d8ef780365317c9"
+          "hash": "488b5736e2d1c614"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/chromium.ts",
-          "hash": "f016fb751c67ee48"
+          "hash": "29af6faf0b201e7d"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/webkitgtk_host.py",
@@ -45,11 +45,11 @@
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/webkitgtk.ts",
-          "hash": "2e9340c4097ed24c"
+          "hash": "d2ba99da8ae46c88"
         },
         {
           "path": "substrate/apps/ui-control-page/tests/hosts/engine.ts",
-          "hash": "24bebd03d1c4d319"
+          "hash": "b8de4e7923489667"
         }
       ]
     }

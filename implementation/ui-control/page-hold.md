@@ -50,10 +50,11 @@ These are §1 and §2 of the webview design, as this code keeps them:
 - The epoch read after the capture equals the epoch read before it, or the
   host holds again, up to three times, and then refuses the capture as
   `page_unsettled`, naming the epochs it saw.
-- No wait on a rendering update outlasts `FRAME_WAIT_MS`, and a page that is
-  or becomes hidden ends every wait at once with its reason. A hold that could
-  not paint is not captured: its host refuses the capture as `cannot_paint`
-  and answers the read.
+- No wait on a rendering update goes on `FRAME_WAIT_MS` past the last one it
+  heard, and a page that is or becomes hidden ends every wait at once with its
+  reason. A page whose rendering updates come, however late, is painting. A
+  hold that could not paint is not captured: its host refuses the capture as
+  `cannot_paint` and answers the read.
 - A release resumes each paused animation at the time it would have reached
   unheld, and runs each deferred callback in the next rendering update.
 
@@ -120,10 +121,10 @@ export interface HoldOptions {
 
 /** How many rendering updates the page is held through before it is read. */
 export const SETTLE_UPDATES = 2;
-/** How long a hold may stand before the page lets itself go. */
+/** How long a hold may stand after it answered before the page lets itself go. */
 export const HOLD_LAPSE_MS = 1000;
-/** How long any wait on a rendering update may last before the page answers
- * that it cannot paint. */
+/** How long any wait on a rendering update may go without hearing one before
+ * the page answers that it cannot paint. */
 export const FRAME_WAIT_MS = 1000;
 /** How long input may keep arriving before the page counts as settled. */
 export const SETTLE_MS = 1000;
@@ -360,16 +361,22 @@ ended:
   hidden, by its `visibilitychange` event. Each answers the reason, never a
   frame.
 - **A frame that does not come is a bound.** A wait that has heard no
-  rendering update for `FRAME_WAIT_MS` ends, answers why, and leaves the page
-  marked as not painting until its next rendering update.
+  rendering update for `FRAME_WAIT_MS`, since it began or since the last it
+  heard, ends, answers why, and leaves the page marked as not painting until
+  its next rendering update. A page busy in a long frame is not one that
+  cannot paint: the update comes late, the wait hears it, and its bound
+  starts again from there.
 - **The page says so.** `unpainted()` answers either reason, or nothing while
   the page paints. It waits on nothing, so a host can ask it before every call
   at the cost of a round trip.
-- **A stepped page's next frame is its host's.** While the stepped clock
-  steps, the page's callbacks run only when the host advances the clock, so
-  `rendered` answers at once, with why the page cannot paint if it cannot.
-  An answer then names the epoch as it stands, and the frame that shows it is
-  the one the host's next step draws.
+- **A stepped page still renders.** While the stepped clock steps, the
+  page's own callbacks run only when the host advances the clock, but the
+  engine's rendering updates go on. So `rendered` waits on the engine's next
+  one, which no callback of the page's rides, bounded as every wait is. The
+  settle after input then still hears the input the engine has yet to hand
+  the page: a perform answers once the page has handled it, and the frame the
+  host's next step draws shows what it did. An answer names the epoch as it
+  stands.
 
 Four waits use it: the hold's wait for its pauses and its settle, an answer's
 wait for the rendering update after an action, a `present` or a `release`
@@ -384,40 +391,66 @@ bound would call a page that paints one that cannot. A hidden page is told
 apart at once by its visibility; only a page that reads visible and paints
 nothing pays the bound, once.
 
+The bound counts from the last rendering update the wait heard, not from its
+start, because a page can be slow without being stuck. A wait listens to
+every rendering update while it runs, and when its bound runs out with an
+update heard within it, it waits on from that update. Counted from the start,
+a hold that began just before a frame which ran 1.2 s, its update coming late
+but coming, was refused as `cannot_paint` in WebKitGTK in 5 of 10 holds, and
+in every hold asked for in the same task as the slow frame: "no rendering
+update has come for 1000 ms". A loaded machine makes such frames.
+
 <a name="chunk-bounded-waits"></a><sub>`src/hold.ts` · `#bounded-waits`</sub>
 
 ```typescript {#bounded-waits}
 const HIDDEN = 'the page is hidden: document.visibilityState is hidden, as for a minimised, unmapped or covered window';
 const hiddenNow = () => (doc.visibilityState === 'hidden' ? HIDDEN : undefined);
-// When a wait last ran out with no rendering update, until the next one comes.
+// Since when no rendering update had come, when a wait last ran out, until
+// the next one comes.
 let stalledAt: number | undefined;
-const stalled = () => {
-  stalledAt ??= native.now() - FRAME_WAIT_MS;
+const stalled = (since: number) => {
+  stalledAt ??= since;
   nativeRaf(() => { stalledAt = undefined; });
 };
 const unpainted = (): string | undefined => hiddenNow()
   ?? (stalledAt === undefined ? undefined : `no rendering update has come for ${Math.round(native.now() - stalledAt)} ms`);
 /** `wait`, or why the page cannot paint: it is or becomes hidden, or
- * `FRAME_WAIT_MS` pass with `wait` unanswered. */
+ * `FRAME_WAIT_MS` pass with `wait` unanswered and no rendering update heard. */
 const whilePainting = (wait: Promise<unknown>): Promise<string | undefined> => new Promise((done) => {
   const now = unpainted();
   if (now) return done(now);
   let finished = false;
+  // The last rendering update heard while the wait runs, or its start.
+  let heard = native.now();
+  let hearing = nativeRaf(function hear() { heard = native.now(); hearing = nativeRaf(hear); });
   const finish = (why?: string) => {
     if (finished) return;
     finished = true;
     native.clearTimeout(timer);
+    nativeCancel(hearing);
     doc.removeEventListener('visibilitychange', onVisibility);
     done(why);
   };
   const onVisibility = () => { const why = hiddenNow(); if (why) finish(why); };
   doc.addEventListener('visibilitychange', onVisibility);
-  const timer = native.setTimeout(() => { stalled(); finish(unpainted()); }, FRAME_WAIT_MS);
+  // The bound runs from the last rendering update heard: a page whose
+  // updates come, however late, is painting.
+  const bound = () => {
+    const quiet = native.now() - heard;
+    if (quiet < FRAME_WAIT_MS) {
+      timer = native.setTimeout(bound, FRAME_WAIT_MS - quiet);
+      return;
+    }
+    stalled(heard);
+    finish(unpainted());
+  };
+  let timer = native.setTimeout(bound, FRAME_WAIT_MS);
   wait.then(() => finish(), () => finish());
 });
-const rendered = () => (clock.stepping()
-  ? Promise.resolve(unpainted())
-  : whilePainting(new Promise<void>((done) => win.requestAnimationFrame(() => done()))));
+// The next rendering update: the page's own, or while the clock steps, the
+// engine's, which goes on while the page's frames wait for the host.
+const nextUpdate = (done: () => void) => (clock.stepping() ? nativeRaf(() => done()) : win.requestAnimationFrame(() => done()));
+const rendered = () => whilePainting(new Promise<void>(nextUpdate));
 const SETTLE_EVENTS = ['pointermove', 'pointerdown', 'pointerup', 'mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'wheel'];
 const settled = async (): Promise<string | undefined> => {
   let quiet = 0;
@@ -466,8 +499,12 @@ time plays a paused animation with no pending play, and that matters twice.
 
 An animation the page cancelled or finished meanwhile is no longer paused,
 and the release leaves it alone. A host that never verifies does not leave the
-page held forever: after `HOLD_LAPSE_MS` the page lets itself go and moves its
-epoch, so that host's verify cannot match.
+page held forever: `HOLD_LAPSE_MS` after the hold answered, the page lets
+itself go and moves its epoch, so that host's verify cannot match. The lapse
+runs from the answer, since the host's part starts there: counted from the
+hold's start, a hold whose settle took 1.2 s had already let the page go when
+its host captured, and every such capture was refused as `page_unsettled`
+in Chromium.
 
 <a name="chunk-hold-and-release"></a><sub>`src/hold.ts` · `#hold-and-release`</sub>
 
@@ -501,9 +538,6 @@ const hold = async <T>(read: () => T, options: HoldOptions = {}): Promise<Held<T
   const start = native.now();
   if (!held) {
     held = true;
-    // A host that never verifies does not leave the page held: the page
-    // lets itself go, and the epoch moves so the host's check fails.
-    lapse = native.setTimeout(() => { release(); bump(); }, HOLD_LAPSE_MS);
     paused = doc.getAnimations().filter((a) => a.playState === 'running').map((animation) => ({ animation, startTime: animation.startTime }));
     for (const { animation } of paused) animation.pause();
     // A pause takes hold, on the compositor too, when its animation is ready.
@@ -517,6 +551,11 @@ const hold = async <T>(read: () => T, options: HoldOptions = {}): Promise<Held<T
   unheld = undefined;
   const epoch = epochNow();
   const answered: Held<T> = { epoch, read: read(), holdMs: native.now() - start };
+  // A host that never verifies does not leave the page held: from the
+  // answer, the page lets itself go, and the epoch moves so the host's check
+  // fails. However long the hold took to settle, its host has the whole lapse.
+  native.clearTimeout(lapse);
+  lapse = native.setTimeout(() => { release(); bump(); }, HOLD_LAPSE_MS);
   return why ? { ...answered, unpainted: why } : answered;
 };
 const verify = (): number => {
@@ -634,8 +673,9 @@ neither takes input, and a hold for the frame alone hides both.
 A drawing may carry the fixture mark too, naming the state fixture it marks
 (`x0k:architecture/ui-interfaces` §4): a band around the page in the
 protocol's `FIXTURE_INK`, `FIXTURE_BAND` of the host's units wide, and the
-protocol's `FIXTURE_NOTICE` at its foot, drawn alike in every look, so a
-person learns one mark for every app
+protocol's `FIXTURE_NOTICE` on a small label at three quarters' opacity in
+the page's bottom right corner, drawn alike in every look, so a person learns
+one mark for every app
 (`x0k:implementation/ui-control/protocol`, "What a host draws of input"). The
 host decides when a fixture is marked, since only it knows what `present`
 asked, but the page may end a fixture itself (`ui.endFixture`,
@@ -647,6 +687,14 @@ person never sees a mark over the live page for a fixture already gone, and a
 host need not hear of the end before the mark leaves. A hold for the frame
 alone hides the mark with the rest, so a capture of the frame alone shows
 none.
+
+The band is drawn a whole number of device pixels wide, the nearest to its
+units at the page's scale and never fewer than one. A page whose viewport is
+narrower than the host's units, such as a Tauri page beside a scrollbar,
+scales the band below its width, and an engine draws a border a fraction of a
+pixel wide as the whole pixels under it: WebKit draws a 2-unit band on a page
+383 CSS pixels wide under 400 units one pixel wide, which leaves the band's
+middle, where a capture reads its ink, to the page.
 
 <a name="chunk-drawn-layer"></a><sub>`src/drawn-layer.ts` · `#drawn-layer`</sub>
 
@@ -709,9 +757,9 @@ const PALETTE = ['#7c3aed', '#0891b2', '#d97706', '#db2777'];
 /** The fixture mark's ink, `x0k-ui-protocol`'s `FIXTURE_INK`, in every look. */
 export const FIXTURE_INK = '#f59e0b';
 /** The fixture mark's band, `FIXTURE_BAND`, in the host's units. */
-const FIXTURE_BAND = 6;
+const FIXTURE_BAND = 2;
 /** What the fixture mark says, `FIXTURE_NOTICE`. */
-const FIXTURE_NOTICE = 'A fixture, not the live state';
+const FIXTURE_NOTICE = 'Fixture, not the live state';
 /** The layer's stylesheet: each mark's colour is its `--ink`. */
 const LOOK = `
   .drawn { position: fixed; inset: 0; pointer-events: none; }
@@ -735,7 +783,7 @@ const LOOK = `
   .allow { background: var(--ink); color: white; }
   .refuse { background: white; color: #111; border: 1.5px solid #111; }
   .fixture { position: absolute; inset: 0; border-style: solid; border-color: var(--ink); box-sizing: border-box; }
-  .fixture-notice { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); }
+  .fixture-notice { position: absolute; bottom: 8px; right: 10px; opacity: 0.75; }
 `;
 /** How near the viewport's right edge, in CSS pixels, a pointer's labels go to its left. */
 const LABEL_ROOM = 160;
@@ -847,11 +895,13 @@ export function makeLayer(win: Window): DrawnLayer {
     return [dim, card, allow, refuse];
   };
   // The fixture mark: a band in the fixture's ink around the page, `band`
-  // CSS pixels wide, and its notice at the page's foot.
+  // CSS pixels wide to the nearest device pixel, and its notice in the page's
+  // bottom right corner.
   const fixtureMark = (band: number, size: number): Element[] => {
     const edge = doc.createElement('div');
     edge.className = 'fixture';
-    edge.style.borderWidth = `${band}px`;
+    const pixel = 1 / (win.devicePixelRatio || 1);
+    edge.style.borderWidth = `${Math.max(1, Math.round(band / pixel)) * pixel}px`;
     const notice = doc.createElement('div');
     notice.className = 'label fixture-notice';
     notice.textContent = FIXTURE_NOTICE;
@@ -1129,9 +1179,13 @@ judges each capture against its read. Six claims are tested per engine:
    the palette's colour for its index, and with no look declared it takes the
    host's own first colour again.
 10. The host's fixture mark is drawn only while the fixture it names stands:
-    its band's ink is in an ordinary hold's capture while the library says
+    its band's ink, read at the middle of the band's width at the page's left
+    edge, is in an ordinary hold's capture while the library says
     that fixture stands, in no hold for the frame alone, and in no capture
     once the library says none stands, with no paint from the host between.
+11. A page that renders slowly is captured, never refused: a hold whose
+    first rendering update runs longer than `FRAME_WAIT_MS` and
+    `HOLD_LAPSE_MS` captures the page as it read it, in each of four trials.
 
 The judge maps CSS pixels to capture pixels by the capture's width over the
 viewport's. That ratio, and not `devicePixelRatio`, is what the pixels show:
@@ -1309,7 +1363,7 @@ the drawing's ink, since its blue is always 0. A capture's pixel inside the
 pointer, 3 and 8 CSS pixels from its tip, is the ink in an ordinary hold and
 the counter in a hold for the frame alone.
 
-<a name="chunk-test-drawn-claims"></a><sub>`src/hold.ts` · `#test-drawn-claims`</sub>
+<a name="chunk-test-drawn-claims"></a><sub>`src/hold.ts` · `#test-drawn-claims` · assembles [test-slow-claims](#chunk-test-slow-claims)</sub>
 
 ```typescript {#test-drawn-claims}
 test('the host\'s drawing is no part of the page: painted in a hold, it moves no epoch, changes no layout walk and answers no hit test', async () => {
@@ -1342,7 +1396,7 @@ test('the host\'s fixture mark is drawn only while the fixture it names stands, 
     });
     assert.ok(held.capture, held.refused?.why);
     const k = held.capture.width / held.read.width;
-    return held.capture.rgb(Math.round(3 * k), Math.round(150 * k));
+    return held.capture.rgb(Math.round(1 * k), Math.round(150 * k));
   };
   const drawn = `globalThis.${PAGE_GLOBAL}.drawn`;
   await engine.evaluate(`${drawn}.standing('x1'); ${drawn}.paint({ units: 0, pointers: [], clicks: [], fixture: 'x1' }); return '';`);
@@ -1375,6 +1429,33 @@ test('a page\'s declared look colours its drivers\' input, and the host\'s own c
   assert.deepEqual(await inked('undefined', 0), DRAWN_INK);
   assert.notDeepEqual(none, [16, 185, 129]);
 });
+<<test-slow-claims>>
+```
+
+Claim 11 makes a page busy, not unable: in the task that asks for the hold,
+the page asks for an animation frame whose callback spins for
+`SLOW_FRAME_MS`, longer than both bounds. That rendering update comes, late,
+and the page paints in it. A hold that took it for a page that cannot paint
+would refuse the capture as `cannot_paint`; one that let itself go while it
+waited would see the epoch move and refuse it as `page_unsettled`.
+
+<a name="chunk-test-slow-claims"></a><sub>`src/hold.ts` · `#test-slow-claims`</sub>
+
+```typescript {#test-slow-claims}
+test('a page whose rendering update runs past the frame bound and the lapse is captured, never refused', async (t) => {
+  const slow = `requestAnimationFrame(() => { const from = performance.now(); while (performance.now() - from < ${SLOW_FRAME_MS}); });`;
+  const seen: { refused?: string; holdMs: number[]; counter: boolean }[] = [];
+  for (let i = 0; i < SLOW_TRIALS; i++) {
+    const held = await heldCapture({
+      hold: async () => JSON.parse(await engine.evaluate(`${slow} return JSON.stringify(await globalThis.${PAGE_GLOBAL}.hold(() => window.probeRead()));`)),
+      capture: async () => engine.capture(),
+      verify: async () => Number(await engine.evaluate(`return String(globalThis.${PAGE_GLOBAL}.verify());`)),
+    });
+    seen.push({ refused: held.refused?.why, holdMs: held.holdMs.map(Math.round), counter: held.capture ? judge(held.read, held.capture).counter : false });
+  }
+  t.diagnostic(JSON.stringify(seen));
+  assert.ok(seen.every((s) => !s.refused && s.counter), JSON.stringify(seen));
+});
 ```
 
 The rest of the test file is its constants and imports. `HOLD_ENGINES` narrows
@@ -1389,6 +1470,7 @@ import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { heldCapture } from '../src/held-capture.ts';
+import { FRAME_WAIT_MS, HOLD_LAPSE_MS } from '../src/hold.ts';
 import { PAGE_GLOBAL, UI_GLOBAL, pageScript } from '../src/page-script.ts';
 import { chromium } from './hosts/chromium.ts';
 import type { Engine, Image } from './hosts/engine.ts';
@@ -1407,6 +1489,10 @@ const FRAME_MS = 1000 / 60;
 const HOLD_P90_MS = 100;
 const NO_IMAGE: Image = { width: 0, height: 0, rgb: () => [0, 0, 0], png: Buffer.alloc(0) };
 const ANIMATION_CLOCK = `const a = document.getAnimations()[0]; return JSON.stringify({ time: Number(a.currentTime), at: performance.now() });`;
+/** How long claim 11's slow rendering update runs: past the frame bound and the hold's lapse. */
+const SLOW_FRAME_MS = Math.max(FRAME_WAIT_MS, HOLD_LAPSE_MS) + 200;
+/** How many held captures claim 11 takes. */
+const SLOW_TRIALS = 4;
 
 <<test-host>>
 
@@ -1457,12 +1543,25 @@ export interface Engine {
   evaluate(body: string): Promise<string>;
   /** The platform's capture of the page as it shows now. */
   capture(): Promise<Image>;
-  /** Hide the page from the screen, as a window that does not present it:
-   * its `document.visibilityState` reads `hidden`. */
+  /** Hide the page from the screen, as a window that does not present it,
+   * and answer once its `document.visibilityState` reads `hidden`. */
   hide(): Promise<void>;
-  /** Show the page again after `hide`. */
+  /** Show the page again after `hide`, and answer once it reads `visible`. */
   show(): Promise<void>;
   close(): Promise<void>;
+}
+
+/** How long a page may take to read the visibility its engine gave it. */
+const VISIBILITY_MS = 5000;
+
+/** Answer once the page, asked through `evaluate`, reads `state` as its
+ * `document.visibilityState`, or fail after `VISIBILITY_MS`. */
+export async function readsVisibility(evaluate: (body: string) => Promise<string>, state: 'hidden' | 'visible'): Promise<void> {
+  const until = Date.now() + VISIBILITY_MS;
+  while ((await evaluate('return document.visibilityState;')) !== state) {
+    if (Date.now() > until) throw new Error(`the page did not read ${state} within ${VISIBILITY_MS} ms`);
+    await sleep(10);
+  }
 }
 
 /** The environment a browser runs in: a scratch home, and none of the live runtime's. */
@@ -1492,7 +1591,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { ownedTempDir, spawnBrowser } from '../../../../../tools/owned-process.mjs';
-import { type Engine, pngImage, scratchEnv } from './engine.ts';
+import { type Engine, pngImage, readsVisibility, scratchEnv } from './engine.ts';
 
 <<cdp-session>>
 
@@ -1520,19 +1619,24 @@ export async function chromium(page: string, script: string, { width, height, ra
     await loaded;
     /** The tab opened in front of the page to hide it, while one is. */
     let covering: string | undefined;
+    const evaluate = async (body: string) => {
+      const r = await cdp.send('Runtime.evaluate', { expression: `(async () => { ${body} })()`, awaitPromise: true, returnByValue: true });
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+      return r.result.value;
+    };
     return {
       name: `chromium at ratio ${ratio}`,
       version,
-      evaluate: async (body) => {
-        const r = await cdp.send('Runtime.evaluate', { expression: `(async () => { ${body} })()`, awaitPromise: true, returnByValue: true });
-        if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-        return r.result.value;
-      },
+      evaluate,
       capture: async () => pngImage(Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png' })).data, 'base64')),
-      hide: async () => { covering ??= (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId; },
+      hide: async () => {
+        covering ??= (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId;
+        await readsVisibility(evaluate, 'hidden');
+      },
       show: async () => {
         if (covering) await cdp.send('Target.closeTarget', { targetId: covering });
         covering = undefined;
+        await readsVisibility(evaluate, 'visible');
       },
       close: async () => { cdp.close(); await browser.stop(); },
     };
@@ -1581,6 +1685,12 @@ reads `visible` and frames come again. WebKitGTK unmaps its window
 2.50: unmapped, the page reads `hidden` and no frame comes within 500 ms, while
 its timers still run on time. Iconifying the window changes nothing there,
 since Xvfb has no window manager to minimise it.
+
+The page learns its new visibility from its engine a moment after the engine
+hides or shows it, and on a loaded machine that moment can outlast the test's
+next request. So each engine's `hide` and `show` answer only once the page
+reads `hidden` or `visible`, which is what a claim about a hidden page
+presupposes.
 
 **WebKitGTK** is the webview Tauri 2 uses on Linux, the `webkit2gtk-4.1` ABI.
 It has no protocol a test can speak to from outside, so a small GTK program
@@ -1741,7 +1851,7 @@ import { createServer, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { ownedTempDir, spawnOwned } from '../../../../../tools/owned-process.mjs';
-import { bgraImage, type Engine, scratchEnv } from './engine.ts';
+import { bgraImage, type Engine, readsVisibility, scratchEnv } from './engine.ts';
 
 /** The Python with GTK 3 and WebKitGTK 4.1 bindings the dev shell names. */
 const PYTHON = process.env.X0K_WEBKITGTK_PYTHON ?? 'x0k-webkitgtk-python';
@@ -1778,13 +1888,19 @@ export async function webkitgtk(page: string, script: string, { width, height, c
     return {
       name: `webkitgtk ${compositing ? 'composited' : 'not composited'}${dpi ? ` at ${dpi} dpi` : ''}`,
       version: `WebKitGTK ${version}`,
-      evaluate: async (body) => (await call({ op: 'eval', body })).value,
+      evaluate,
       capture: async () => {
         const r = await call({ op: 'snap' });
         return bgraImage(r.width, r.height, r.stride, Buffer.from(r.bgra, 'base64'), Buffer.from(r.png, 'base64'));
       },
-      hide: async () => { await call({ op: 'hide' }); },
-      show: async () => { await call({ op: 'show' }); },
+      hide: async () => {
+        await call({ op: 'hide' });
+        await readsVisibility(evaluate, 'hidden');
+      },
+      show: async () => {
+        await call({ op: 'show' });
+        await readsVisibility(evaluate, 'visible');
+      },
       close: async () => { link.destroy(); await stopAll(); },
     };
   } catch (e) {
@@ -1827,6 +1943,7 @@ const call = async (request: object) => {
   if (reply.error) throw new Error(reply.error);
   return reply;
 };
+const evaluate = async (body: string): Promise<string> => (await call({ op: 'eval', body })).value;
 ```
 
 The images are plain byte-shuffling: a cairo surface's BGRA rows for
@@ -1836,6 +1953,7 @@ row filters undone.
 <a name="chunk-engine-file"></a><sub>`tests/hosts/engine.ts` · `#engine-file` · assembles [engine-contract](#chunk-engine-contract)</sub>
 
 ```typescript {#engine-file file="tests/hosts/engine.ts"}
+import { setTimeout as sleep } from 'node:timers/promises';
 import { inflateSync } from 'node:zlib';
 
 <<engine-contract>>
@@ -1894,20 +2012,20 @@ nix develop /home/lsp/src/l30/main -c node --test substrate/apps/ui-control-page
 It needs the package's pinned dependencies (`npm ci` in
 `substrate/apps/ui-control-page`), Node 24 or later, for its type stripping and
 its `WebSocket`, and the
-dev shell's Chromium, Xvfb and `x0k-webkitgtk-python`. It takes about 35
-seconds for all four engines.
+dev shell's Chromium, Xvfb and `x0k-webkitgtk-python`. It takes about a
+minute for all four engines.
 
 ## What the test shows
 
 Measured on arca with Chromium 148.0.7778.178 and WebKitGTK 2.50.4, 80 trials
-per engine. With the hold, all 32 claims hold:
+per engine. With the hold, all 44 claims hold:
 
 ```
 ✔ the probe page in webkitgtk composited
 ✔ the probe page in webkitgtk not composited
 ✔ the probe page in chromium at ratio 1
 ✔ the probe page in chromium at ratio 2
-ℹ pass 32
+ℹ pass 44
 ℹ fail 0
 ```
 
@@ -1925,6 +2043,9 @@ The hold's median was 41 to 42 ms in every engine, its 90th percentile 47 to
 49 ms, and its maximum under 50 ms. The slider's mean drift was within 6 ms of its
 timeline.
 
+Through claim 11's 1.2 s frame, every engine captured all four holds, each
+taking 1.21 to 1.24 s, with the counter painted as read.
+
 Each mutation of the hold below turns the test red for its own reason. Each
 was made in this chapter and tangled, and the test run on the projection:
 
@@ -1938,6 +2059,9 @@ was made in this chapter and tangled, and the test run on the projection:
 | the layer drawing the host's fixture mark whatever stands | claim 10 in all four engines | `after the fixture went 245,158,11` |
 | the layer taking input: `pointer-events: auto`, not `inert` | claim 7 in all four engines | `hit: 'x0k-drawn-input'` where the page's is `counter` |
 | the layer made after the library records the shadow roots a page makes | claim 7 in all four engines | `walked: false`, `moved: true`: the walk reaches into the layer's root, and a paint moves the epoch |
+| a wait's bound counted from its start, not from the last rendering update heard | claim 11 in WebKitGTK | `no rendering update has come for 1 ms` in every hold: the bound ran out over a frame that came |
+| the lapse counted from the hold's start, not its answer | claim 11 in all four engines | `page_unsettled: epochs 46→47, 49→51, 53→55`: the page let itself go before its host captured |
+| both, as the library had them | claim 11 in all four engines | WebKitGTK `no rendering update has come for 1000 ms`; Chromium `page_unsettled: epochs 65→70, 73→79, 82→88` |
 
 Without compositing and with no wait before the capture, WebKitGTK agreed
 on the slider in every trial with its animations running. Its snapshot paints

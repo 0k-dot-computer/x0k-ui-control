@@ -57,9 +57,9 @@ const PALETTE = ['#7c3aed', '#0891b2', '#d97706', '#db2777'];
 /** The fixture mark's ink, `x0k-ui-protocol`'s `FIXTURE_INK`, in every look. */
 export const FIXTURE_INK = '#f59e0b';
 /** The fixture mark's band, `FIXTURE_BAND`, in the host's units. */
-const FIXTURE_BAND = 6;
+const FIXTURE_BAND = 2;
 /** What the fixture mark says, `FIXTURE_NOTICE`. */
-const FIXTURE_NOTICE = 'A fixture, not the live state';
+const FIXTURE_NOTICE = 'Fixture, not the live state';
 /** The layer's stylesheet: each mark's colour is its `--ink`. */
 const LOOK = `
   .drawn { position: fixed; inset: 0; pointer-events: none; }
@@ -83,7 +83,7 @@ const LOOK = `
   .allow { background: var(--ink); color: white; }
   .refuse { background: white; color: #111; border: 1.5px solid #111; }
   .fixture { position: absolute; inset: 0; border-style: solid; border-color: var(--ink); box-sizing: border-box; }
-  .fixture-notice { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); }
+  .fixture-notice { position: absolute; bottom: 8px; right: 10px; opacity: 0.75; }
 `;
 /** How near the viewport's right edge, in CSS pixels, a pointer's labels go to its left. */
 const LABEL_ROOM = 160;
@@ -195,11 +195,13 @@ export function makeLayer(win: Window): DrawnLayer {
     return [dim, card, allow, refuse];
   };
   // The fixture mark: a band in the fixture's ink around the page, `band`
-  // CSS pixels wide, and its notice at the page's foot.
+  // CSS pixels wide to the nearest device pixel, and its notice in the page's
+  // bottom right corner.
   const fixtureMark = (band: number, size: number): Element[] => {
     const edge = doc.createElement('div');
     edge.className = 'fixture';
-    edge.style.borderWidth = `${band}px`;
+    const pixel = 1 / (win.devicePixelRatio || 1);
+    edge.style.borderWidth = `${Math.max(1, Math.round(band / pixel)) * pixel}px`;
     const notice = doc.createElement('div');
     notice.className = 'label fixture-notice';
     notice.textContent = FIXTURE_NOTICE;

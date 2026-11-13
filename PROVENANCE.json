@@ -1,8 +1,8 @@
 {
   "schema": "x0k.provenance/v1",
   "publication_uri": "x0k:publication/x0k-ui-control",
-  "corpus_rev": "nmqpsowwklktunxtxqnpmnmmvvkptpql",
-  "corpus_commit": "51738870a196b1fe37a33561f0463875572e1c3c",
+  "corpus_rev": "vutzxnpolzlttzskvkxmuzrwnktpwpmn",
+  "corpus_commit": "2e920782ca55586575883e65f8b4e1949f043ffa",
   "path_map": {
     "decisions/architecture/surfaces/ui-control-channel.md": "corpora/x0k/decisions/architecture/surfaces/ui-control-channel.md",
     "decisions/architecture/surfaces/ui-interfaces.md": "corpora/x0k/decisions/architecture/surfaces/ui-interfaces.md",

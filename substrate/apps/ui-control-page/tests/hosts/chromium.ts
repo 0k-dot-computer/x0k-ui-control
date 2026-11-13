@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { ownedTempDir, spawnBrowser } from '../../../../../tools/owned-process.mjs';
-import { type Engine, pngImage, scratchEnv } from './engine.ts';
+import { type Engine, pngImage, readsVisibility, scratchEnv } from './engine.ts';
 
 /** A CDP session over the browser's WebSocket: calls by id, and events by method. */
 async function devtools(url: string) {
@@ -50,19 +50,24 @@ export async function chromium(page: string, script: string, { width, height, ra
     await loaded;
     /** The tab opened in front of the page to hide it, while one is. */
     let covering: string | undefined;
+    const evaluate = async (body: string) => {
+      const r = await cdp.send('Runtime.evaluate', { expression: `(async () => { ${body} })()`, awaitPromise: true, returnByValue: true });
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+      return r.result.value;
+    };
     return {
       name: `chromium at ratio ${ratio}`,
       version,
-      evaluate: async (body) => {
-        const r = await cdp.send('Runtime.evaluate', { expression: `(async () => { ${body} })()`, awaitPromise: true, returnByValue: true });
-        if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-        return r.result.value;
-      },
+      evaluate,
       capture: async () => pngImage(Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png' })).data, 'base64')),
-      hide: async () => { covering ??= (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId; },
+      hide: async () => {
+        covering ??= (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId;
+        await readsVisibility(evaluate, 'hidden');
+      },
       show: async () => {
         if (covering) await cdp.send('Target.closeTarget', { targetId: covering });
         covering = undefined;
+        await readsVisibility(evaluate, 'visible');
       },
       close: async () => { cdp.close(); await browser.stop(); },
     };

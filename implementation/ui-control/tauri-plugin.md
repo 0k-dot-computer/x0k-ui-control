@@ -102,14 +102,16 @@ These are the webview design's §2 and §6, as this plugin keeps them:
 - Every event the plugin delivers is told to the app's observer on the main
   thread before the view is handed it, so a page handler's request to the
   app always finds it told; `last_delivered` answers the last one's instant.
-  The plugin's events pass no app-level dispatch: on Linux no GDK event
-  handler sees them, and on macOS no `sendEvent:` (below, "Telling the host
-  what it delivers").
+  The plugin's events pass no app-level dispatch on their way in: on Linux
+  no GDK event handler sees them, and on macOS no `sendEvent:`, though WebKit
+  hands a key down the page did not handle back to `sendEvent:`, carrying the
+  plugin's platform time (below, "Telling the host what it delivers").
 - A driver's takeover is answered by the host's configuration,
   `UiPlugin::takeover`, after what its `before_input` declines: asked of the
   person in the page, held at once, or refused. While one is asked for or
-  held, no pointer or key event of the person's reaches the page, the exit
-  key ends it at once, and the page shows the hold or the ask, naming the
+  held, no pointer or key event of the person's reaches the page, the
+  person's exit key ends it at once while the driver's own keys, its Escape
+  among them, never do, and the page shows the hold or the ask, naming the
   requester; a capture of the frame alone shows neither (below, "Holding a
   takeover").
 - A stepped screencast's frame *n* is the page at screencast time *n* ×
@@ -147,7 +149,7 @@ command and permission names, from the package name, so the plugin is
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-tauri"
-version = "0.3.0"
+version = "0.3.1"
 edition = { workspace = true }
 license = "MIT"
 description = "A Tauri plugin that holds a Tauri app's page still and captures it natively, for the UI-control endpoint."
@@ -169,11 +171,11 @@ uuid = { version = "1", features = ["v4"] }
 
 # The endpoint the plugin serves, the checks it makes before the page hears a
 # call, and where the endpoint binds.
-x0k-ui-endpoint = { path = "../x0k-ui-endpoint", version = "0.3.0" }
+x0k-ui-endpoint = { path = "../x0k-ui-endpoint", version = "0.3.1" }
 # The profile this process runs, which the endpoint's directory is named for.
 x0k-runtime-dir = { path = "../x0k-runtime-dir", version = "0.1.0" }
 # The protocol's values, which the endpoint and the page both speak.
-x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.3.0" }
+x0k-ui-protocol = { path = "../x0k-ui-protocol", version = "0.3.1" }
 # The spelling of the page's state shape, which the endpoint's fixture checks read.
 x0k-datum = { version = "0.1.0" }
 
@@ -2656,20 +2658,35 @@ place every person's event passes and none of the plugin's need.
   own events take the same path, since the plugin hands them to
   `gtk_main_do_event` itself (above, "Input, through GTK's own event
   path"), so the plugin marks them: a main-thread flag is set while it
-  hands one over, and the handler lets a marked event through. GDK keeps
+  hands one over, and the handler lets a marked event through. WebKitGTK
+  hands a key the page did not handle back to `gtk_main_do_event` once the
+  page has answered it, after the flag is cleared (measured, below, "What
+  each platform's hooks see"), so a key also passes when its time is a told
+  event's platform time, as on macOS. GDK keeps
   one app-wide event handler, `gdk_event_handler_set`, which is the host's
   own witness of a person's input (below, "What each platform's hooks
   see"), so the plugin does not take it.
 - **macOS.** The plugin hands its events to the view's responder methods,
   never through `NSApplication`'s `sendEvent:`, so an AppKit local event
   monitor, which `sendEvent:` calls, sees the person's events and not the
-  plugin's. The plugin installs one, at its first takeover, which answers
-  nil for the person's input to the webview's window while a takeover is
-  asked for or held. One event of the plugin's may still reach it: a key
-  down the page did not handle, if WebKit hands it back to `sendEvent:`
-  ("What each platform's hooks see", below). Under a takeover the monitor
-  drops that one too, which only keeps it from the menu. arca cannot
-  compile the macOS code, so this half waits on the Mac.
+  plugin's on their way in. The plugin installs one, at its first takeover,
+  which answers nil for the person's input to the webview's window while a
+  takeover is asked for or held. One event of the plugin's does reach it: a
+  key down the page did not handle, which WebKit hands back to `sendEvent:`
+  as the very event the plugin made, with the plugin's timestamp ("What
+  each platform's hooks see", below). Read as the person's, a driver's own
+  Escape would end the takeover its sequence holds, as chariot saw on
+  x0k-ui-control 0.3.0. So the plugin marks its events by their time:
+  `Teller::tell` keeps each tick's platform time before the view is handed
+  the event (below, "Telling the host what it delivers"), and the monitor
+  passes on an event carrying one of those times without the person's rule
+  meeting it. It is never the person's input, never the exit, and it
+  answers or ends nothing. Passed on, it reaches the menu and the key
+  equivalents as an unhandled key does with no takeover. Whether a
+  handed-back Escape then takes a full-screen window out of full screen is
+  open, and waits on the Mac (intent 0187305b). arca checks the macOS code
+  for the Mac's target but cannot run it, so the probe test of this half
+  waits on the Mac.
 
 What the person's event meets is one rule on both platforms, with no
 window: while no takeover stands, it passes; while one is asked for or
@@ -2839,7 +2856,11 @@ mod takeover_tests {
 
 On Linux the gate is the `event` signal of the toplevel and of the webview
 widget, connected on GTK's main thread, and the mark on the plugin's own
-events is the flag `delivering` sets around `gtk_main_do_event`. A press's
+events is the flag `delivering` sets around `gtk_main_do_event`, and for a
+key, its time: a key WebKitGTK hands back carries the plugin's time, and
+only keys come back. A GDK time is in milliseconds, of the clock the
+plugin's events are stamped by, so a person's key in the very millisecond
+of a driver's tick would pass too (inferred, never seen). A press's
 position is its root position less the webview's window's origin, in the
 widget's units, which are the view's.
 
@@ -2854,11 +2875,12 @@ use std::cell::Cell;
 use gtk::gdk::{self, EventType};
 use gtk::glib::Propagation;
 use gtk::prelude::*;
-use tauri::{Runtime, Webview};
+use tauri::{Manager, Runtime, Webview};
 use tokio::sync::oneshot;
 use x0k_ui_protocol::presentation::TAKEOVER_EXIT;
 
 use crate::page::{PageError, Person, PersonInput};
+use crate::provenance::Provenance;
 
 thread_local! {
     /// Whether the plugin is handing GTK one of its own events now.
@@ -2886,14 +2908,15 @@ pub(crate) fn delivering<T>(deliver: impl FnOnce() -> T) -> T {
 /// for the window's life, at the `event` signal of its toplevel, which a key
 /// reaches first, and of the webview widget, which a pointer's event does.
 pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) -> Result<(), PageError> {
+    let provenance = webview.try_state::<Provenance>().map(|state| state.inner().clone()).unwrap_or_default();
     let (done, connected) = oneshot::channel();
     webview.with_webview(move |platform| {
         let view = platform.inner().upcast::<gtk::Widget>();
         let Some(toplevel) = view.toplevel() else { return };
         for widget in [&toplevel, &view] {
-            let (view, person) = (view.downgrade(), person.clone());
+            let (view, person, provenance) = (view.downgrade(), person.clone(), provenance.clone());
             widget.connect_event(move |_, event| match view.upgrade() {
-                Some(view) if meets(&view, &person, event) => Propagation::Stop,
+                Some(view) if meets(&view, &person, &provenance, event) => Propagation::Stop,
                 _ => Propagation::Proceed,
             });
         }
@@ -2903,13 +2926,14 @@ pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) 
 }
 
 /// Whether the person's `event` stops before the page: never one the plugin
-/// is delivering, and only a pointer's or a key's.
-fn meets(view: &gtk::Widget, person: &Person, event: &gdk::Event) -> bool {
+/// is delivering or a key WebKitGTK hands back, and only a pointer's or a key's.
+fn meets(view: &gtk::Widget, person: &Person, provenance: &Provenance, event: &gdk::Event) -> bool {
     if DELIVERING.with(Cell::get) {
         return false;
     }
     use EventType as E;
     let input = match event.event_type() {
+        E::KeyPress | E::KeyRelease if provenance.made(f64::from(event.time())) => return false,
         E::KeyPress | E::KeyRelease => {
             let exit = event.keyval() == Some(*gdk::keys::constants::Escape);
             PersonInput::Key { key: if exit { TAKEOVER_EXIT } else { "" }, down: event.event_type() == E::KeyPress }
@@ -2944,7 +2968,10 @@ pub(crate) async fn view_width<R: Runtime>(webview: &Webview<R>) -> Option<f64> 
 
 On macOS the gate is a local event monitor, installed on the main thread
 for the app's life, which answers nil for a person's pointer or key event
-in the webview's window while a takeover stands. A press's position is the
+in the webview's window while a takeover stands. An event whose timestamp
+is, to the bit, the platform time of an event the plugin told
+(`Provenance::made`) is the plugin's own, handed back by WebKit: the
+monitor passes it on and the person's rule never meets it. A press's position is the
 event's point in the window converted to the view's, flipped when the view
 is not, less the safe area the page begins below, as the plugin's own input
 places a point (above, "Input, as AppKit hands it to the view"). The exit
@@ -2961,18 +2988,21 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
 use objc2_web_kit::WKWebView;
-use tauri::{Runtime, Webview};
+use tauri::{Manager, Runtime, Webview};
 use tokio::sync::oneshot;
 use x0k_ui_protocol::presentation::TAKEOVER_EXIT;
 
 use crate::page::{PageError, Person, PersonInput};
+use crate::provenance::Provenance;
 
 /// Escape's key code, the same on every layout.
 const ESCAPE: u16 = 53;
 
 /// Hold the person's input back from `webview`'s window by `person`'s rule,
-/// for the app's life, at a local event monitor.
+/// for the app's life, at a local event monitor, which passes on every event
+/// the plugin made.
 pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) -> Result<(), PageError> {
+    let provenance = webview.try_state::<Provenance>().map(|state| state.inner().clone()).unwrap_or_default();
     let (done, installed) = oneshot::channel();
     webview.with_webview(move |platform| {
         // SAFETY: on macOS `inner()` is the webview's WKWebView, alive while
@@ -2981,7 +3011,9 @@ pub(crate) async fn hold_back<R: Runtime>(webview: &Webview<R>, person: Person) 
         let monitor = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             // SAFETY: AppKit hands the monitor an event, valid for the call.
             let seen = unsafe { event.as_ref() };
-            if meets(&view, &person, seen) {
+            // A key down the page did not handle comes back here from
+            // WebKit as the very event the plugin made: never the person's.
+            if !provenance.made(seen.timestamp()) && meets(&view, &person, seen) {
                 std::ptr::null_mut()
             } else {
                 event.as_ptr()
@@ -3119,12 +3151,22 @@ pub struct DeliveredInput {
 pub(crate) type InputObserver = Arc<dyn Fn(&DeliveredInput) + Send + Sync>;
 ```
 
-The plugin keeps what it tells in the app's state: the host's observer, and
-the instant of the last event told for each webview.
+The plugin keeps what it tells in the app's state: the host's observer, the
+instant of the last event told for each webview, and the platform times of
+the events it told last. The takeover reads those times, to know a key
+WebKit hands back, to `NSApplication`'s `sendEvent:` on macOS and to
+`gtk_main_do_event` on Linux, for the plugin's (above, "Holding a
+takeover"). It keeps the last 1024 distinct times, one
+per tick, so its memory is bounded and its search short, and a tick is
+forgotten only after a thousand more: far more than can be in flight
+between WebKit taking a key down and handing it back.
 
 <a name="chunk-provenance-state"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#provenance-state`</sub>
 
 ```rust {#provenance-state}
+/// How many of the told events' distinct platform times the plugin keeps.
+const TOLD_TIMES: usize = 1024;
+
 /// What the plugin tells its host of the input it delivers, and asks it
 /// before a sequence runs, kept in the app's state.
 #[derive(Clone, Default)]
@@ -3132,13 +3174,34 @@ pub(crate) struct Provenance {
     observer: Option<InputObserver>,
     before: Option<BeforeInput>,
     last: Arc<Mutex<HashMap<String, Instant>>>,
+    /// The platform times of the last `TOLD_TIMES` ticks told, by their
+    /// bits, oldest first.
+    told: Arc<Mutex<VecDeque<u64>>>,
     /// Woken by `resume_input`, for the sequences waiting on `before`.
     resumed: Arc<Notify>,
 }
 
 impl Provenance {
     pub(crate) fn new(observer: Option<InputObserver>, before: Option<BeforeInput>) -> Self {
-        Self { observer, before, last: Arc::default(), resumed: Arc::default() }
+        Self { observer, before, last: Arc::default(), told: Arc::default(), resumed: Arc::default() }
+    }
+
+    /// Keep `platform_time` among the told times, once however many of a
+    /// tick's events carry it.
+    fn remember(&self, platform_time: f64) {
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        if told.back() != Some(&platform_time.to_bits()) {
+            if told.len() == TOLD_TIMES {
+                told.pop_front();
+            }
+            told.push_back(platform_time.to_bits());
+        }
+    }
+
+    /// Whether an event carrying `platform_time` is one the plugin made: the
+    /// time is, to the bit, one of the last `TOLD_TIMES` ticks told.
+    pub(crate) fn made(&self, platform_time: f64) -> bool {
+        self.told.lock().unwrap_or_else(PoisonError::into_inner).contains(&platform_time.to_bits())
     }
 }
 
@@ -3153,8 +3216,9 @@ pub fn last_delivered<R: Runtime, M: Manager<R>>(manager: &M, webview: &str) -> 
 
 A sequence's input is told through one `Teller`, which the platform's input
 path calls for each event it is about to hand the view. It records the
-instant first and then calls the observer, so `last_delivered` already
-answers the event when the observer hears it.
+instant and the platform time first and then calls the observer, so
+`last_delivered` already answers the event when the observer hears it, and
+the event is known for the plugin's before the view is handed it.
 
 <a name="chunk-provenance-teller"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#provenance-teller`</sub>
 
@@ -3181,6 +3245,7 @@ impl Teller {
     pub(crate) fn tell(&self, event: &Event, platform_time: f64) {
         let at = Instant::now();
         self.provenance.last.lock().unwrap_or_else(PoisonError::into_inner).insert(self.webview.clone(), at);
+        self.provenance.remember(platform_time);
         if let Some(observer) = &self.provenance.observer {
             let told = DeliveredInput {
                 webview: self.webview.clone(),
@@ -3288,12 +3353,49 @@ pub fn resume_input<R: Runtime, M: Manager<R>>(manager: &M) {
 }
 ```
 
-<a name="chunk-provenance-file"></a><sub>[`src/provenance.rs`](../../crates/x0k-ui-tauri/src/provenance.rs) · `#provenance-file` · assembles [provenance-delivered](#chunk-provenance-delivered) · [provenance-state](#chunk-provenance-state) · [provenance-teller](#chunk-provenance-teller) · [provenance-turn](#chunk-provenance-turn)</sub>
+One test holds the told times: a told event's time is the plugin's and a
+time never told is not, to the bit; a tick's events keep one place however
+many share its time; and the first tick is forgotten only once
+`TOLD_TIMES` more have been told.
+
+<a name="chunk-provenance-tests"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#provenance-tests`</sub>
+
+```rust {#provenance-tests}
+#[cfg(test)]
+mod told_tests {
+    use super::*;
+    use x0k_ui_protocol::input::Held;
+
+    fn key(key: &str) -> Event {
+        Event::KeyDown { key: key.to_string(), held: Held::default() }
+    }
+
+    #[test]
+    fn a_told_event_s_time_is_the_plugin_s_until_a_thousand_ticks_after_it() {
+        let provenance = Provenance::default();
+        let teller = Teller { provenance: provenance.clone(), webview: "main".to_string(), requester: "agent".to_string(), requester_name: None };
+        let first = 1000.25;
+        teller.tell(&key("Escape"), first);
+        teller.tell(&key("a"), first);
+        assert!(provenance.made(first), "a told time was not the plugin's");
+        assert!(!provenance.made(first + 1e-9), "a time never told was the plugin's");
+        for tick in 1..TOLD_TIMES {
+            teller.tell(&key("a"), first + tick as f64);
+        }
+        assert!(provenance.made(first), "a tick's events took more than one place");
+        teller.tell(&key("a"), first + TOLD_TIMES as f64);
+        assert!(!provenance.made(first), "the first tick outlived TOLD_TIMES more");
+        assert!(provenance.made(first + 1.0) && provenance.made(first + TOLD_TIMES as f64), "a recent tick was forgotten");
+    }
+}
+```
+
+<a name="chunk-provenance-file"></a><sub>[`src/provenance.rs`](../../crates/x0k-ui-tauri/src/provenance.rs) · `#provenance-file` · assembles [provenance-delivered](#chunk-provenance-delivered) · [provenance-state](#chunk-provenance-state) · [provenance-teller](#chunk-provenance-teller) · [provenance-turn](#chunk-provenance-turn) · [provenance-tests](#chunk-provenance-tests)</sub>
 
 ```rust {#provenance-file file="src/provenance.rs"}
 //! What the plugin tells its host of the input it delivers: every event,
 //! on the main thread, before the view is handed it.
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -3308,6 +3410,8 @@ use x0k_ui_protocol::input::{Event, Perform};
 <<provenance-teller>>
 
 <<provenance-turn>>
+
+<<provenance-tests>>
 ```
 
 **What each platform's hooks see.** On macOS, from the code: `synthesize`
@@ -3317,15 +3421,18 @@ and the rest; a wheel is read back from a CoreGraphics event with
 `eventWithCGEvent:`, which makes an event and posts nothing. Nothing in it
 calls `NSApplication`'s or `NSWindow`'s `sendEvent:`, `postEvent:` or
 `CGEventPost`, so an app's local event monitor, which AppKit calls from
-`NSApplication`'s `sendEvent:`, is not called on the way in. One path may
-still reach it, and only the Mac can say: WebKit hands a key down the page
-did not handle back to `NSApplication`'s `sendEvent:`, so that the menu and
+`NSApplication`'s `sendEvent:`, is not called on the way in. One path does
+reach it: WebKit hands a key down the page did not handle back to `NSApplication`'s `sendEvent:`, so that the menu and
 the responder chain see it (`WebViewImpl::doneWithKeyEvent`, read from
-memory of WebKit's source, not measured). If it does, a local monitor sees
-such a key down after the page has handled it, as the very event the plugin
-made, with the plugin's timestamp. The Mac's probe test decides it (below),
-and either way a monitor's event whose timestamp is a told event's
-`platform_time` is the plugin's.
+memory of WebKit's source). Chariot's report on x0k-ui-control 0.3.0 shows
+it: a script's Escape ended the takeover its own sequence held, which
+only the takeover's monitor, meeting a key down of Escape's code, does
+(inferred from the report, not measured here). So a local monitor sees such
+a key down after the page has handled it, as the very event the plugin
+made, with the plugin's timestamp. A monitor's event whose timestamp is a
+told event's `platform_time` is the plugin's: the plugin's own takeover
+passes it on by that mark (`Provenance::made`), and a host's monitor tells
+it the same way. The Mac's probe test counts these key downs (below).
 
 On Linux, measured on arca by the probe test: the plugin hands each event to
 `gtk_main_do_event` itself, so the handler an app installs with
@@ -3337,7 +3444,12 @@ was called with no input event, while it was called with the X server's own
 snooper was called with the key's `KeyPress` and `KeyRelease`, and the
 toplevel window's `event` signal with the click's `MotionNotify` and the
 key's two events (not the button's, which WebKit handled before they would
-reach the toplevel). So on Linux the app-level witness of a person's input
+reach the toplevel). A key the page did not handle comes back: under a
+takeover whose sequence pressed Escape, the snooper and the toplevel's
+`event` signal saw the key's `KeyPress` and `KeyRelease` and then its
+`KeyPress` again, with the plugin's time, which WebKitGTK hands back to
+`gtk_main_do_event` once the page has answered it, after the plugin's own
+hand-over has ended. So on Linux the app-level witness of a person's input
 is a GDK event handler that wraps `gtk_main_do_event`, and neither the key
 snooper nor a window's signals. That the X server's input events reach the
 handler as the queued key did is inferred from GDK's dispatch, which hands
@@ -4350,7 +4462,7 @@ because a Tauri app needs a build script of its own, and it is never shipped.
 ```toml {#probe-manifest file="probe-app/Cargo.toml"}
 [package]
 name = "x0k-ui-tauri-probe"
-version = "0.3.0"
+version = "0.3.1"
 edition = { workspace = true }
 license = "MIT"
 description = "A minimal Tauri app holding the probe page, for x0k-ui-tauri's probe test."
@@ -4364,10 +4476,10 @@ base64 = "0.22"
 serde_json = "1"
 tauri = { version = "2.12", default-features = false, features = ["wry", "x11"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
-x0k-ui-protocol = { path = "../../x0k-ui-protocol", version = "0.3.0" }
-x0k-ui-tauri = { path = "..", version = "0.3.0" }
+x0k-ui-protocol = { path = "../../x0k-ui-protocol", version = "0.3.1" }
+x0k-ui-tauri = { path = "..", version = "0.3.1" }
 # The client a driver calls the app's own endpoint through, for the probe's `endpoint` request.
-x0k-ui-endpoint = { path = "../../x0k-ui-endpoint", version = "0.3.0" }
+x0k-ui-endpoint = { path = "../../x0k-ui-endpoint", version = "0.3.1" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The webview's hardware acceleration policy.
@@ -4381,7 +4493,7 @@ gtk = "0.18"
 block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSProcessInfo"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSProcessInfo", "NSString"] }
 
 [build-dependencies]
 tauri-build = { version = "2.7", default-features = false }
@@ -4563,10 +4675,12 @@ is its answer with that id:
   parts, reads those frames of the screencast in the same session, which
   holds it, and answers them as `frames`;
 - `{"op": "person", "key"}` and `{"op": "person", "click": [x, y]}` make a
-  person's input as the windowing system's events arrive, put on GDK's
-  queue: a key's press and release in the toplevel window, or a press and
-  release of the first button at a position in the webview's units
-  (Linux only);
+  person's input as the windowing system's events arrive. On Linux they are
+  put on GDK's queue: a key's press and release in the toplevel window, or
+  a press and release of the first button at a position in the webview's
+  units. On macOS a key's down and up in the webview's window are handed to
+  `NSApplication`'s `sendEvent:`, Escape by its key code and any other key
+  by its characters alone; a click is Linux's only;
 - `{"op": "told"}` answers, and forgets, what the host was told of the input
   the plugin delivered, what the page's handlers asked the host about it,
   and what the app-level hooks saw (below, "What the host is told");
@@ -5228,7 +5342,41 @@ async fn person_input(webview: &Webview<Wry>, request: &Value) -> Result<Value, 
     Ok(json!({ "time": time }))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// A person's key, made as the windowing system's events arrive: its down
+/// and up in the webview's window, handed to `NSApplication`'s `sendEvent:`,
+/// so the app's local monitors meet it as a person's, with a time no event
+/// of the plugin's carries. Escape is its key code, 53; any other key is its
+/// characters alone. A click is not made.
+#[cfg(target_os = "macos")]
+async fn person_input(webview: &Webview<Wry>, request: &Value) -> Result<Value, PageError> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSView};
+    use objc2_foundation::{NSPoint, NSProcessInfo, NSString};
+    let Some(key) = request["key"].as_str().map(str::to_string) else { return Err(PageError::InputDropped) };
+    let (done, sent) = oneshot::channel();
+    webview.with_webview(move |platform| {
+        // SAFETY: on macOS `inner()` is the webview's WKWebView, an NSView,
+        // alive while this closure runs on the main thread.
+        let view = unsafe { &*platform.inner().cast::<NSView>() };
+        let (Some(mtm), Some(window)) = (MainThreadMarker::new(), view.window()) else { return };
+        let (code, characters) = if key == "Escape" { (53, NSString::from_str("\u{1B}")) } else { (0, NSString::from_str(&key)) };
+        let time = NSProcessInfo::processInfo().systemUptime();
+        for kind in [NSEventType::KeyDown, NSEventType::KeyUp] {
+            let made = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                kind, NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), time, window.windowNumber(), None, &characters, &characters, false, code,
+            );
+            if let Some(made) = made {
+                NSApplication::sharedApplication(mtm).sendEvent(&made);
+            }
+        }
+        let _ = done.send(time);
+    })?;
+    let time = sent.await.map_err(|_| PageError::NoWindow)?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    Ok(json!({ "time": time }))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 async fn person_input(_webview: &Webview<Wry>, _request: &Value) -> Result<Value, PageError> {
     Err(PageError::NoWindow)
 }
@@ -5977,6 +6125,22 @@ input is made as the windowing system's is, put on GDK's queue (the
 The conformance suite runs over the `allow` and `refuse` apps with the
 runner naming that answer, and its configured-takeover claim holds.
 
+On both platforms, under `allow`, a driver's own Escape is the driver's:
+
+- A takeover whose sequence presses and releases Escape and then pauses
+  still holds after its Escape: a capture during the pause shows the band,
+  and the sequence runs out its pause. On macOS WebKit hands that Escape,
+  which the page did not handle, back to `NSApplication`'s `sendEvent:`,
+  where the takeover's monitor would read it as the person's exit, and the
+  test's diagnostic counts how many key downs of the plugin's the app's own
+  local monitor saw. On Linux WebKitGTK hands it back to
+  `gtk_main_do_event` the same way, after the plugin's flag is cleared, and
+  the diagnostic names the hooks that saw its `KeyPress` again.
+- The person's Escape, made as the windowing system's (on macOS a key down
+  and up handed to `NSApplication`'s `sendEvent:`, as the `real` request
+  hands a mouse move), ends a hold at once: the band is gone while the
+  sequence still runs.
+
 <a name="chunk-test-takeover"></a><sub>[`src/lib.rs`](../../crates/x0k-ui-tauri/src/lib.rs) · `#test-takeover`</sub>
 
 ```typescript {#test-takeover}
@@ -6148,6 +6312,46 @@ if (!MAC) describe('a Tauri app whose host asks the person for a takeover, over 
     assert.ok(joined.ms >= TAKEOVER_ASK_MS, `refused in ${joined.ms} ms`);
   });
 });
+
+describe('a Tauri app whose host allows a takeover, against the driver\'s own Escape', () => {
+  let t0: Awaited<ReturnType<typeof takeoverApp>>;
+  before(async () => { t0 = await takeoverApp({ default: 'allow' }); });
+  after(async () => { await t0?.app.close(); });
+  /** Whether a capture shows the hold's band at the page's left edge. */
+  const band = async () => {
+    const capture = await t0.drawn(false);
+    return inkAt(capture, 2 * t0.captureScale, 150 * t0.captureScale);
+  };
+  /** A takeover whose sequence presses and releases Escape, then holds for `ms`. */
+  const escaping = (ms: number) => ({
+    takeover: true,
+    sources: [{ id: 'keys', kind: 'key', steps: [{ do: 'key_down', key: 'Escape' }, { do: 'key_up', key: 'Escape' }, { do: 'pause', ms }] }],
+  });
+
+  test('a driver\'s own Escape leaves the takeover its sequence holds standing', async (t) => {
+    await t0.app.call({ op: 'told' });
+    const { detached } = await t0.driven('perform', escaping(1500), true);
+    await sleep(600);
+    const held = await band();
+    const joined = await t0.app.call({ op: 'join', detached });
+    const { told: events, hooks } = await t0.app.call({ op: 'told' });
+    const times = new Set(events.map((e: any) => e.time));
+    const ours = hooks.filter((h: any) => times.has(h.time)).map((h: any) => `${h.hook} ${h.kind}`);
+    t.diagnostic(`answered in ${joined.ms?.toFixed(0)} ms; ${events.length} events told; the app's hooks saw ${JSON.stringify(ours)} of them`);
+    assert.ok(joined.answer?.done && joined.ms >= 1500, JSON.stringify(joined));
+    assert.ok(held, 'the driver\'s own Escape ended the takeover its sequence holds');
+  });
+  test('the person\'s Escape ends the hold at once', async () => {
+    const { detached } = await t0.driven('perform', holding(2500), true);
+    await sleep(400);
+    assert.ok(await band(), 'no hold to end');
+    await t0.app.call({ op: 'person', key: 'Escape' });
+    const ended = !(await band());
+    const joined = await t0.app.call({ op: 'join', detached });
+    assert.ok(joined.answer?.done && joined.ms >= 2500, JSON.stringify(joined));
+    assert.ok(ended, 'the hold stood after the person\'s Escape');
+  });
+});
 ```
 
 The stepped screencast test casts the library's clock page
@@ -6159,7 +6363,10 @@ one before it casts: a fixture's `going` starts the stage, as the page's
 at the top right blue. A run that presents `going` at 0 ms then starts the
 same motion at screencast time 0 in every cast. The fixture's state reads
 the page's `Date.now()` too, so each frame's state says the date the page's
-clock read when it drew. Its claims:
+clock read when it drew. A key patch beside the ink turns red when the page
+hears the key `k`, which a `perform` step types last of twenty keys, and the
+page spends 10 ms on each key it hears, timed by the events' own clock,
+which the stepped clock leaves to the wall. Its claims:
 
 1. **Rerun.** Two casts of one run at 30 fps for a second give the same trace
    hash, and every row the same capture.
@@ -6172,9 +6379,17 @@ clock read when it drew. Its claims:
    first shows in frame ⌈100 × fps / 1000⌉, at 25 fps, where that is frame 3
    and frame 2 is at 80 ms, and at 60 fps, where it is frame 6: the frame
    before shows no ink, and the frame names the new fixture.
-5. **The end.** After a cast the page's clock steps no more, and the page's
+5. **Input in a frame.** A `perform` step at 100 ms that types 19 keys
+   and then `k` shows in frame 3 at 25 fps, the first frame after it: the
+   perform answers only once the page has handled all its input, so that
+   frame shows what the input did, and the frame before shows the key patch
+   white. WebKit hands the page one key event at a time, each once the page
+   has handled the last, so the last key lands some 200 ms of the wall after
+   the plugin has put all twenty in, more than the frame's own settle
+   waits.
+6. **The end.** After a cast the page's clock steps no more, and the page's
    animation frames run on the wall again.
-6. **Refused by the configuration.** Under a host whose configuration refuses
+7. **Refused by the configuration.** Under a host whose configuration refuses
    a stepped screencast's hold and allows a takeover, a cast is refused as
    `takeover_not_granted` at once, naming the configuration, the page's clock
    never begins, and a sequence's takeover still holds.
@@ -6198,6 +6413,14 @@ const STAGE = `const live = { going: 0, ink: 0 };
     ink.style.background = store.ink ? 'rgb(0, 0, 255)' : 'rgb(255, 255, 255)';
     if (store.going && !was) window.go();
   };
+  const keyed = document.createElement('div');
+  keyed.style.cssText = 'position: absolute; left: 270px; top: 0; width: 40px; height: 40px; background: rgb(255, 255, 255)';
+  document.body.append(keyed);
+  addEventListener('keydown', (e) => {
+    const from = new Event('now').timeStamp;
+    while (new Event('now').timeStamp - from < 10);
+    if (e.key === 'k') keyed.style.background = 'rgb(255, 0, 0)';
+  });
   const int = { shape: { kind: 'int' } };
   globalThis.__x0kUi.install({ app: 'clock page', state: {
     shape: { kind: 'struct', fields: { going: int, ink: int, date: int } },
@@ -6209,6 +6432,8 @@ const STAGE = `const live = { going: 0, ink: 0 };
   return 'ok';`;
 /** Where the ink patch is, in CSS pixels. */
 const INK = [350, 20];
+/** Where the key patch is, in CSS pixels. */
+const KEYED = [290, 20];
 /** How long the probe waits for a cast's answer. */
 const CAST_MS = 600_000;
 /** The date the dated casts name: 2026-11-12T00:00:00Z. */
@@ -6224,13 +6449,14 @@ async function clockApp(takeover: object) {
   const observed = await app.call({ op: 'endpoint', call: 'observe', argument: { parts: ['state'] } });
   const fingerprint = observed.answer.state.fingerprint;
   const present = (at_ms: number, state: object) => ({ at_ms, step: { do: 'present', present: { fixture: { kind: 'state', state: { date: 0, ...state } }, fingerprint } } });
+  const perform = (at_ms: number, sources: object[]) => ({ at_ms, step: { do: 'perform', perform: { sources } } });
   /** A cast of `run` at `fps` for `max_ms` from `date`, and the frames `indices` of it with their captures. */
   const cast = async (run: object[], fps: number, max_ms: number, indices: number[] = [], date?: number) => {
     const argument = { run, fps, max_ms, settle_ms: max_ms, clock: 'stepped', parts: ['capture', 'state'], presented: false, ...(date === undefined ? {} : { date }) };
     const frames = indices.length ? { indices, parts: ['capture', 'state'] } : undefined;
     return app.call({ op: 'endpoint', call: 'cast', argument, ...(frames ? { frames } : {}) }, CAST_MS);
   };
-  return { app, present, cast };
+  return { app, present, perform, cast };
 }
 
 /** The screencast a cast answered, or a failure naming what it answered instead. */
@@ -6246,10 +6472,17 @@ const inked = (frame: any) => {
   const [r, g, b] = capture.rgb(INK[0], INK[1]);
   return r === 0 && g === 0 && b === 255;
 };
+/** Whether a frame's capture shows the key patch red, or why it has no capture. */
+const keyed = (frame: any) => {
+  if (!frame.observation.capture) return JSON.stringify(frame.observation.refused);
+  const capture = pngImage(Buffer.from(frame.observation.capture.png));
+  const [r, g, b] = capture.rgb(KEYED[0], KEYED[1]);
+  return r === 255 && g === 0 && b === 0;
+};
 
 if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock over its endpoint', () => {
   let t0: Awaited<ReturnType<typeof clockApp>>;
-  let first: any, second: any, fast: any, dated: any, redated: any;
+  let first: any, second: any, fast: any, dated: any, redated: any, typed: any;
   const shownIn: Record<number, any> = {};
   before(async () => {
     t0 = await clockApp({ default: 'allow' });
@@ -6264,6 +6497,10 @@ if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock ove
       const inking = [t0.present(0, { going: 1, ink: 0 }), t0.present(100, { going: 1, ink: 1 })];
       shownIn[fps] = { at, answered: await t0.cast(inking, fps, 200, [at - 1, at]) };
     }
+    // Last, since the key patch stays red once the page heard the key.
+    const keys = [...'qwertyuiopasdfghjlzk'].flatMap((key) => [{ do: 'key_down', key }, { do: 'key_up', key }]);
+    const typing = [t0.present(0, { going: 1, ink: 0 }), t0.perform(100, [{ id: 'keys', kind: 'key', steps: keys }])];
+    typed = await t0.cast(typing, 25, 200, [2, 3]);
   });
   after(async () => { await t0?.app.close(); });
 
@@ -6305,6 +6542,12 @@ if (!MAC) describe('the clock page in a Tauri app, cast at its stepped clock ove
       assert.notEqual(cast.rows[at].shown.handle, cast.rows[at - 1].shown.handle, 'the frame names the fixture before');
     });
   }
+  test('a perform at 100 ms shows all its input in frame 3 at 25 fps, the first frame after it', () => {
+    const cast = screencast(typed);
+    const [before, showing] = typed.frames.frames.frames;
+    assert.deepEqual([before.index, showing.index], [2, 3], JSON.stringify(cast.ended));
+    assert.deepEqual([keyed(before), keyed(showing)], [false, true], `the key patch in frames 2 and 3; ended ${JSON.stringify(cast.ended)}`);
+  });
   test('after a cast the page\'s clock steps no more, and its animation frames run on the wall', async () => {
     assert.equal((await t0.app.call({ op: 'eval', body: STEPPING })).value, 'false');
     const ran = await t0.app.call({ op: 'eval', body: 'return String(await new Promise((done) => requestAnimationFrame(() => done(true))));' });
@@ -6361,9 +6604,9 @@ async function fixtureMarkApp(dev: boolean) {
   const driven = async (call: string, argument: object) => (await app.call({ op: 'endpoint', call, argument })).answer;
   const drawn = async (frame_only: boolean) => image((await app.call({ op: 'drawn', frame_only })).capture);
   /** Whether a capture shows the fixture mark's band at the page's left
-   * edge, halfway down: the band is the protocol's 6 units wide. */
+   * edge, halfway down, at the middle of the protocol's 2-unit band. */
   const band = (capture: Image) => {
-    const [r, g, b] = capture.rgb(Math.round(3 * snap.scale), Math.round(capture.height / 2));
+    const [r, g, b] = capture.rgb(Math.round(1 * snap.scale), Math.round(capture.height / 2));
     return r === FIXTURE_INK[0] && g === FIXTURE_INK[1] && b === FIXTURE_INK[2];
   };
   /** A present asking `mark`, over a session kept open `hold_ms` after it
@@ -6871,6 +7114,22 @@ under `refuse`. Each claim was seen red first, by mutation:
   `the_person_s_input_stops_only_while_a_takeover_stands_and_the_exit_key_ends_a_hold`
   was red.
 
+**A driver's own Escape.** Measured on arca over the probe app's endpoint,
+under `allow`: a takeover whose sequence pressed and released Escape and
+then paused 1500 ms still held during its pause, and answered in 1561 ms;
+the key snooper and the toplevel's `event` signal saw the Escape's
+`KeyPress`, `KeyRelease` and `KeyPress` again, all at the plugin's time, the
+last handed back by WebKitGTK. The person's Escape then ended a 2500 ms
+hold at once. Red first: before the Linux gate read the told times, the
+first claim was red, `the driver's own Escape ended the takeover its
+sequence holds`, with the same three hooks' events, and the person's claim
+was green. The unit test
+`a_told_event_s_time_is_the_plugin_s_until_a_thousand_ticks_after_it` was
+red with `Teller::tell` not keeping the time (`a told time was not the
+plugin's`) and with the oldest time never let go (`the first tick outlived
+TOLD_TIMES more`). On macOS the code is checked for the Mac's target on
+arca and the claims wait on the Mac ("What is shown, and what is open").
+
 **The fixture mark.** Measured on arca over the probe app's endpoint, the
 answer page at GDK scale 1. While a fixture a driver presented stood, a
 capture with the host's drawing showed `FIXTURE_INK` at the band, the frame
@@ -7017,6 +7276,14 @@ a rerun draws the same frames; each took about 1.1 s of the wall, and 61
 frames at 60 fps took 2.3 s, so a stepped frame costs the plugin about 37 ms
 here. Frame *n* at 30 fps was frame 2*n* at 60 fps in all 31. A `present` at
 100 ms painted its ink first in frame 3 at 25 fps and frame 6 at 60 fps.
+A `perform` at 100 ms of twenty keys, on the page spending 10 ms on each,
+showed all of them in frame 3 at 25 fps. Before the library's `rendered`
+waited on the engine's update while the clock steps, the perform answered
+before the page had heard most of its keys, and frame 3's capture was refused
+as `page_unsettled: epochs 329→333, 339→343, 347→351`, the keys still
+arriving through each of its holds. With one key, or thirty keys the page
+handled at once, the frame's own settle had let them all in on arca, so the
+claim's page takes its time over each.
 Each claim was seen red for its reason by a mutation of this chapter:
 
 - with the page's clock never begun or stepped, so the page moved on the
@@ -7078,13 +7345,19 @@ never compiled. On the Mac, in the `x0k-ui-tauri` crate:
    its event told.
 2. The same run's `an AppKit local event monitor sees none of the plugin's
    pointer events` holds, and its diagnostic says how many of the plugin's
-   key downs the monitor saw. None means the plugin's events never reach a
-   monitor at all; some, each a `KeyDown`, means WebKit hands back the key
-   downs the page did not handle through `NSApplication`'s `sendEvent:`, and
-   chariot must discount a monitor's key down whose timestamp is a told
-   event's `platform_time`. Record which, here and in the section above.
+   key downs the monitor saw. Chariot's report says some reach it: each a
+   `KeyDown` the page did not handle, which WebKit hands back through
+   `NSApplication`'s `sendEvent:`, and chariot discounts a monitor's key down
+   whose timestamp is a told event's `platform_time`, as the plugin's
+   takeover does. Record the count, here and in the section above.
 3. Red first: with `teller.tell` moved after the view's responder call and
    deferred by `dispatch_after` 300 ms, the first claim is red as on Linux
    (`"told":0`); with the plugin's mouse events handed to the window's
    `sendEvent:` in place of the view's `mouseDown:`, the monitor claim is red,
    naming `LeftMouseDown`.
+4. The same run's `a driver's own Escape leaves the takeover its sequence
+   holds standing` and `the person's Escape ends the hold at once` hold, the
+   first's diagnostic naming the plugin's `KeyDown` the app's monitor saw.
+   Red first: with the takeover's monitor not asking `Provenance::made`, the
+   first is red, `the driver's own Escape ended the takeover its sequence
+   holds`, and the second stays green.

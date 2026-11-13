@@ -4,6 +4,7 @@ import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { heldCapture } from '../src/held-capture.ts';
+import { FRAME_WAIT_MS, HOLD_LAPSE_MS } from '../src/hold.ts';
 import { PAGE_GLOBAL, UI_GLOBAL, pageScript } from '../src/page-script.ts';
 import { chromium } from './hosts/chromium.ts';
 import type { Engine, Image } from './hosts/engine.ts';
@@ -22,6 +23,10 @@ const FRAME_MS = 1000 / 60;
 const HOLD_P90_MS = 100;
 const NO_IMAGE: Image = { width: 0, height: 0, rgb: () => [0, 0, 0], png: Buffer.alloc(0) };
 const ANIMATION_CLOCK = `const a = document.getAnimations()[0]; return JSON.stringify({ time: Number(a.currentTime), at: performance.now() });`;
+/** How long claim 11's slow rendering update runs: past the frame bound and the hold's lapse. */
+const SLOW_FRAME_MS = Math.max(FRAME_WAIT_MS, HOLD_LAPSE_MS) + 200;
+/** How many held captures claim 11 takes. */
+const SLOW_TRIALS = 4;
 
 /** The host's side of one observation: hold, capture after `latency` ms, verify. */
 const host = (engine: Engine, latency: number) => ({
@@ -122,7 +127,7 @@ for (const [name, start] of ENGINES.filter(([name]) => !only || only.some((o) =>
         });
         assert.ok(held.capture, held.refused?.why);
         const k = held.capture.width / held.read.width;
-        return held.capture.rgb(Math.round(3 * k), Math.round(150 * k));
+        return held.capture.rgb(Math.round(1 * k), Math.round(150 * k));
       };
       const drawn = `globalThis.${PAGE_GLOBAL}.drawn`;
       await engine.evaluate(`${drawn}.standing('x1'); ${drawn}.paint({ units: 0, pointers: [], clicks: [], fixture: 'x1' }); return '';`);
@@ -154,6 +159,20 @@ for (const [name, start] of ENGINES.filter(([name]) => !only || only.some((o) =>
       assert.deepEqual(second, [16, 185, 129]);
       assert.deepEqual(await inked('undefined', 0), DRAWN_INK);
       assert.notDeepEqual(none, [16, 185, 129]);
+    });
+    test('a page whose rendering update runs past the frame bound and the lapse is captured, never refused', async (t) => {
+      const slow = `requestAnimationFrame(() => { const from = performance.now(); while (performance.now() - from < ${SLOW_FRAME_MS}); });`;
+      const seen: { refused?: string; holdMs: number[]; counter: boolean }[] = [];
+      for (let i = 0; i < SLOW_TRIALS; i++) {
+        const held = await heldCapture({
+          hold: async () => JSON.parse(await engine.evaluate(`${slow} return JSON.stringify(await globalThis.${PAGE_GLOBAL}.hold(() => window.probeRead()));`)),
+          capture: async () => engine.capture(),
+          verify: async () => Number(await engine.evaluate(`return String(globalThis.${PAGE_GLOBAL}.verify());`)),
+        });
+        seen.push({ refused: held.refused?.why, holdMs: held.holdMs.map(Math.round), counter: held.capture ? judge(held.read, held.capture).counter : false });
+      }
+      t.diagnostic(JSON.stringify(seen));
+      assert.ok(seen.every((s) => !s.refused && s.counter), JSON.stringify(seen));
     });
   });
 }

@@ -35,7 +35,7 @@ the decision they hold it to.
 ```toml {#manifest file="Cargo.toml"}
 [package]
 name = "x0k-ui-protocol"
-version = "0.3.0"
+version = "0.3.1"
 edition = { workspace = true }
 license = "MIT"
 description = "What an app and a driver say over the UI-control endpoint: the offer, an observation, an action, a sequence of input, and the checks made on them."
@@ -2769,9 +2769,13 @@ when the fixture goes: released, replaced by an unmarked one, ended by the app,
 or released at its session's end.
 
 Every host draws the mark alike, so a person learns one mark for every app: a
-band `FIXTURE_BAND` units wide around the window in `FIXTURE_INK`, and
-`FIXTURE_NOTICE` at its foot. A look changes none of it, because a mark a page
-could recolour into its own content would stop telling the person anything.
+thin band `FIXTURE_BAND` units wide around the window in `FIXTURE_INK`, and
+`FIXTURE_NOTICE` on a small label at three quarters' opacity in the window's
+bottom right corner. The mark tells without alarming: a band any wider, or a
+label across the window's foot, reads as an error in a person's own window.
+The band stays solid ink, so a capture still finds it at its middle. A look
+changes none of it, because a mark a page could recolour into its own content
+would stop telling the person anything.
 The conformance suite reads the band's ink in a capture
 (`x0k:implementation/ui-control/conformance`, "A screencast"). Like a
 takeover, the mark is no mark that fades.
@@ -2783,9 +2787,9 @@ takeover, the mark is no mark that fades.
 /// The colour of the fixture mark's band, as `[r, g, b]`, in every host.
 pub const FIXTURE_INK: [u8; 3] = [245, 158, 11];
 /// How wide the fixture mark's band is, in host units.
-pub const FIXTURE_BAND: f64 = 6.0;
-/// What the fixture mark says at the window's foot.
-pub const FIXTURE_NOTICE: &str = "A fixture, not the live state";
+pub const FIXTURE_BAND: f64 = 2.0;
+/// What the fixture mark says at the window's foot, in its right corner.
+pub const FIXTURE_NOTICE: &str = "Fixture, not the live state";
 
 impl InputPresentation {
     /// Mark the fixture `handle` over the window while it stands, or mark none.

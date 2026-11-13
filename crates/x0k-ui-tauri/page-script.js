@@ -620,8 +620,8 @@
   // substrate/apps/ui-control-page/src/drawn-layer.ts
   var PALETTE = ["#7c3aed", "#0891b2", "#d97706", "#db2777"];
   var FIXTURE_INK = "#f59e0b";
-  var FIXTURE_BAND = 6;
-  var FIXTURE_NOTICE = "A fixture, not the live state";
+  var FIXTURE_BAND = 2;
+  var FIXTURE_NOTICE = "Fixture, not the live state";
   var LOOK = `
   .drawn { position: fixed; inset: 0; pointer-events: none; }
   .ring { position: absolute; border: 3px solid var(--ink); border-radius: 50%; box-sizing: border-box; }
@@ -644,7 +644,7 @@
   .allow { background: var(--ink); color: white; }
   .refuse { background: white; color: #111; border: 1.5px solid #111; }
   .fixture { position: absolute; inset: 0; border-style: solid; border-color: var(--ink); box-sizing: border-box; }
-  .fixture-notice { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); }
+  .fixture-notice { position: absolute; bottom: 8px; right: 10px; opacity: 0.75; }
 `;
   var LABEL_ROOM = 160;
   var ARROW = "0,0 0,17 4.5,13 8,20 11,19 7.5,12 13,12";
@@ -756,7 +756,8 @@
     const fixtureMark = (band, size) => {
       const edge = doc.createElement("div");
       edge.className = "fixture";
-      edge.style.borderWidth = `${band}px`;
+      const pixel = 1 / (win.devicePixelRatio || 1);
+      edge.style.borderWidth = `${Math.max(1, Math.round(band / pixel)) * pixel}px`;
       const notice = doc.createElement("div");
       notice.className = "label fixture-notice";
       notice.textContent = FIXTURE_NOTICE;
@@ -946,8 +947,8 @@
     const HIDDEN = "the page is hidden: document.visibilityState is hidden, as for a minimised, unmapped or covered window";
     const hiddenNow = () => doc.visibilityState === "hidden" ? HIDDEN : void 0;
     let stalledAt;
-    const stalled = () => {
-      stalledAt ??= native.now() - FRAME_WAIT_MS;
+    const stalled = (since) => {
+      stalledAt ??= since;
       nativeRaf(() => {
         stalledAt = void 0;
       });
@@ -957,10 +958,16 @@
       const now = unpainted();
       if (now) return done(now);
       let finished = false;
+      let heard = native.now();
+      let hearing = nativeRaf(function hear() {
+        heard = native.now();
+        hearing = nativeRaf(hear);
+      });
       const finish = (why) => {
         if (finished) return;
         finished = true;
         native.clearTimeout(timer);
+        nativeCancel(hearing);
         doc.removeEventListener("visibilitychange", onVisibility);
         done(why);
       };
@@ -969,13 +976,20 @@
         if (why) finish(why);
       };
       doc.addEventListener("visibilitychange", onVisibility);
-      const timer = native.setTimeout(() => {
-        stalled();
+      const bound = () => {
+        const quiet = native.now() - heard;
+        if (quiet < FRAME_WAIT_MS) {
+          timer = native.setTimeout(bound, FRAME_WAIT_MS - quiet);
+          return;
+        }
+        stalled(heard);
         finish(unpainted());
-      }, FRAME_WAIT_MS);
+      };
+      let timer = native.setTimeout(bound, FRAME_WAIT_MS);
       wait.then(() => finish(), () => finish());
     });
-    const rendered = () => clock.stepping() ? Promise.resolve(unpainted()) : whilePainting(new Promise((done) => win.requestAnimationFrame(() => done())));
+    const nextUpdate = (done) => clock.stepping() ? nativeRaf(() => done()) : win.requestAnimationFrame(() => done());
+    const rendered = () => whilePainting(new Promise(nextUpdate));
     const SETTLE_EVENTS = ["pointermove", "pointerdown", "pointerup", "mousemove", "mousedown", "mouseup", "click", "keydown", "keyup", "input", "wheel"];
     const settled = async () => {
       let quiet = 0;
@@ -1020,10 +1034,6 @@
       const start = native.now();
       if (!held) {
         held = true;
-        lapse = native.setTimeout(() => {
-          release();
-          bump();
-        }, HOLD_LAPSE_MS);
         paused = doc.getAnimations().filter((a) => a.playState === "running").map((animation) => ({ animation, startTime: animation.startTime }));
         for (const { animation } of paused) animation.pause();
         if (paused.length > 0) unheld = await whilePainting(Promise.all(paused.map(({ animation }) => animation.ready)));
@@ -1036,6 +1046,11 @@
       unheld = void 0;
       const epoch2 = epochNow();
       const answered = { epoch: epoch2, read: read(), holdMs: native.now() - start };
+      native.clearTimeout(lapse);
+      lapse = native.setTimeout(() => {
+        release();
+        bump();
+      }, HOLD_LAPSE_MS);
       return why ? { ...answered, unpainted: why } : answered;
     };
     const verify = () => {
